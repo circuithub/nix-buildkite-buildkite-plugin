@@ -1,0 +1,9 @@
+name: nix-buildkite
+description: Generates a Buildkite pipeline from a Nix expression
+author: https://github.com/circuithub
+requirements: []
+configuration:
+  properties:
+    file:
+      type: string
+  additionalProperties: false
