@@ -5,7 +5,7 @@ NIX_FILE="$BUILDKITE_PLUGIN_NIX_BUILDKITE_FILE"
 
 echo "--- :nixos: Running nix-buildkite"
 nix-build -E '(import "${ builtins.fetchGit { url = git://github.com/circuithub/nix-buildkite-buildkite-plugin; } }/jobs.nix").nix-buildkite' -o nix-buildkite
-PIPELINE=$( NIX_PATH="$BUILDKITE_PLUGIN_NIX_BUILDKITE_NIX_PATH" ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
+PIPELINE=$( NIX_PATH=nixpkgs=$(nix-instantiate -E --eval --strict '(import ./nix/pkgs {}).path') ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
 rm nix-buildkite
 
 echo "--- :pipeline: Uploading pipeline"
