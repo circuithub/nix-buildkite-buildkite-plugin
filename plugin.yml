@@ -6,4 +6,6 @@ configuration:
   properties:
     file:
       type: string
+    nix_path:
+      type: string
   additionalProperties: false
