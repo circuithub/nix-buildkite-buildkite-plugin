@@ -87,7 +87,7 @@ main = do
   Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
 
 stepify :: String -> String
-stepify = map replace . takeBaseName
+stepify = take 99 . map replace . takeBaseName
   where
     replace x | isAlphaNum x = x
     replace '/' = '/'
