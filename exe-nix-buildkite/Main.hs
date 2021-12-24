@@ -42,6 +42,8 @@ import System.Process hiding ( env )
 import Data.Text ( pack, unpack )
 import Data.Text.IO ( readFile )
 
+-- sort
+import Data.Sort ( uniqueSort )
 
 main :: IO ()
 main = do
@@ -49,7 +51,7 @@ main = do
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
+  inputDrvPaths <- uniqueSort <$> Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
