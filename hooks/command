@@ -4,7 +4,7 @@ set -euo pipefail
 NIX_FILE="$BUILDKITE_PLUGIN_NIX_BUILDKITE_FILE"
 
 echo "--- :nixos: Running nix-buildkite"
-nix-build -E '(import "${ builtins.fetchGit { url = git://github.com/circuithub/nix-buildkite-buildkite-plugin; } }/jobs.nix").nix-buildkite' -o nix-buildkite
+nix-build -E '(import "${ builtins.fetchGit { url = git://github.com/circuithub/nix-buildkite-buildkite-plugin; ref = "main"; } }/jobs.nix").nix-buildkite' -o nix-buildkite
 PIPELINE=$( ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
 rm nix-buildkite
 
