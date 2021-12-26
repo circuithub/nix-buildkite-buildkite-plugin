@@ -55,3 +55,22 @@ steps:
 
 That's it! Following these steps should give you a working pipeline that builds
 `nix-buildkite`.
+
+## Cachix support
+
+In your `.buildkite/pipeline.yml` file, if you set the `CACHIX_NAME`
+environment variable to the name of a Cachix binary cache, your
+Buildkite agents will write the Nix derivations they build to that
+cache.
+
+This feature requires either that you set the `CACHIX_AUTH_TOKEN`
+pipeline secret (https://buildkite.com/docs/pipelines/secrets), or
+that you configure an auth token in each Buildkite agent's home
+directory via the `cachix authtoken` command. In either case, the
+token must provide write access to the cache.
+
+Additionally, your Buildkite agent's path should include both the
+`cachix` and `tee` executables, and the agent's shell must support
+process substitution
+(https://en.wikipedia.org/wiki/Process_substitution).
+
