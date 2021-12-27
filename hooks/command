@@ -2,6 +2,9 @@
 set -euo pipefail
 
 NIX_FILE="$BUILDKITE_PLUGIN_NIX_BUILDKITE_FILE"
+if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_POST_BUILD_HOOK:-}" ]]; then
+    export POST_BUILD_HOOK="$BUILDKITE_PLUGIN_NIX_BUILDKITE_POST_BUILD_HOOK"
+fi
 
 echo "--- :nixos: Running nix-buildkite"
 nix-build -E '(import "${ builtins.fetchGit { url = https://github.com/circuithub/nix-buildkite-buildkite-plugin; ref = "main"; } }/jobs.nix").nix-buildkite' -o nix-buildkite
