@@ -27,6 +27,7 @@ import System.Environment ( getArgs )
 import qualified Data.ByteString.Lazy
 
 -- containers
+import Data.Containers.ListUtils ( nubOrd )
 import qualified Data.Map as Map
 
 -- filepath
@@ -49,7 +50,7 @@ main = do
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
+  inputDrvPaths <- nubOrd . Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
