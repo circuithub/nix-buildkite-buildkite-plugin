@@ -51,6 +51,36 @@ steps:
     label: ":pipeline:"
 ```
 
+## Post-build hooks
+
+The plugin accepts an optional `post-build-hook` argument, whose value
+is the name (or path) of an executable that's compatible with Nix's
+[post-build hook
+semantics](https://nixos.org/manual/nix/stable/advanced-topics/post-build-hook.html):
+
+``` yaml
+steps:
+  - command: nix-buildkite
+    label: ":nixos: :buildkite:"
+    plugins:
+      circuithub/nix-buildkite:
+        file: jobs.nix
+        post-build-hook: /etc/nix/upload-to-cache.sh
+```
+
+When specified, the plugin will run this hook after its
+`nix-instantiate` phase, and after each individual job that it
+creates. This option is useful when you want to take advantage of
+Nix's post-build hook feature (e.g., to upload the derivations created
+by the pipeline), but you don't want to enable a system-wide
+post-build hook. For example, you might only want to upload some
+pipelines' outputs to your binary cache, or you might want to upload
+different pipelines' outputs to different binary caches.
+
+Note that in order to use this feature, you'll need to add the user
+that the Buildkite agent runs as to `nix.trustedUsers`, as only
+trusted users can run post-build hooks.
+
 ## Sit Back and Enjoy!
 
 That's it! Following these steps should give you a working pipeline that builds

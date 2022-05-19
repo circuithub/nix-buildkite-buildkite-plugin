@@ -6,4 +6,11 @@ configuration:
   properties:
     file:
       type: string
+    post-build-hook:
+      type: string
+  required:
+    - file
+  not:
+    required:
+      - post-build-hook
   additionalProperties: false
