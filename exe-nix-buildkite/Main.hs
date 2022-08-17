@@ -56,6 +56,10 @@ main = do
       Nothing -> return []
       Just path -> return $ [ "--post-build-hook", path ]
 
+  -- TODO: this should be made into an option
+  -- (and probably should add options for prefixing at all, using emoji, and sorting also)
+  let skipPrefix = [ "required" ]
+
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
   inputDrvPaths <- nubOrd . Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
@@ -76,9 +80,11 @@ main = do
                       -- derivation name.
                         pack (takeFileName drvPath)
                       Just n -> n
-            system = case Map.lookup "system" (env drv) of
-                       Nothing -> ""
-                       Just s -> emojify s <> ":"
+            system = if name `elem` skipPrefix
+                     then ""
+                     else case Map.lookup "system" (env drv) of
+                            Nothing -> ""
+                            Just s -> emojify s <> ":"
         in return (system <> name, drvPath)
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
