@@ -40,7 +40,8 @@ import Nix.Derivation
 import System.Process hiding ( env, system )
 
 -- text
-import Data.Text ( pack, unpack )
+import Data.Text ( Text, pack, unpack )
+import qualified Data.Text as T
 import Data.Text.IO ( readFile )
 
 
@@ -76,7 +77,7 @@ main = do
                       Just n -> n
             system = case Map.lookup "system" (env drv) of
                        Nothing -> ""
-                       Just s -> s <> ":"
+                       Just s -> emojify s <> ":"
         in return (system <> name, drvPath)
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
@@ -94,6 +95,21 @@ main = do
               dependencies = map stepify $ filter (`elem` map snd drvs) $ drop 1 $ reachable drvPath g
 
   Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
+
+-- Transform nix platforms into buildkite emoji
+-- See https://github.com/buildkite/emojis
+emojify :: Text -> Text
+emojify system =
+  let (_,os) = T.breakOnEnd "-" system
+  in toEmoji os <> system
+  where
+    toEmoji "darwin" = ":darwin: "
+    toEmoji "freebsd" = ":freebsd: "
+    toEmoji "linux" = ":linux: "
+    toEmoji "netbsd" = ":netbsd: "
+    toEmoji "openbsd" = ":openbsd: "
+    toEmoji "windows" = ":windows: "
+    toEmoji _ = ""
 
 stepify :: String -> String
 stepify = take 99 . map replace . takeBaseName
