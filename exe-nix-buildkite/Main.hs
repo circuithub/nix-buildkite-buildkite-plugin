@@ -37,7 +37,7 @@ import System.FilePath
 import Nix.Derivation
 
 -- process
-import System.Process hiding ( env )
+import System.Process hiding ( env, system )
 
 -- text
 import Data.Text ( pack, unpack )
@@ -68,14 +68,16 @@ main = do
         return (pack (takeFileName drvPath), drvPath)
 
       Right drv ->
-        case Map.lookup "name" (env drv) of
-          Nothing ->
-            -- There was no 'name' environment variable, so we'll just use the
-            -- derivation name.
-            return (pack (takeFileName drvPath), drvPath)
-
-          Just name ->
-            return (name, drvPath)
+        let name = case Map.lookup "name" (env drv) of
+                      Nothing ->
+                      -- There was no 'name' environment variable, so we'll just use the
+                      -- derivation name.
+                        pack (takeFileName drvPath)
+                      Just n -> n
+            system = case Map.lookup "system" (env drv) of
+                       Nothing -> ""
+                       Just s -> s <> ":"
+        in return (system <> name, drvPath)
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
 
