@@ -17,6 +17,7 @@ import Data.Attoparsec.Text ( parseOnly )
 
 -- base
 import Data.Char
+import Data.List ( sortOn )
 import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Traversable ( for )
 import qualified Prelude
@@ -84,17 +85,17 @@ main = do
 
   let steps = map (uncurry step) drvs
         where
-          step label drvPath =
+          step label drvPath = (label,
             object
               [ "label" .= unpack label
               , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
               , "key" .= stepify drvPath
               , "depends_on" .= dependencies
-              ]
+              ])
             where
               dependencies = map stepify $ filter (`elem` map snd drvs) $ drop 1 $ reachable drvPath g
 
-  Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
+  Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= map snd ( sortOn fst steps ) ]
 
 -- Transform nix platforms into buildkite emoji
 -- See https://github.com/buildkite/emojis
