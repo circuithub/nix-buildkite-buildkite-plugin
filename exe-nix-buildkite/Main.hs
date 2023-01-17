@@ -17,6 +17,7 @@ import Data.Attoparsec.Text ( parseOnly )
 
 -- base
 import Data.Char
+import Data.List ( sortOn )
 import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Traversable ( for )
 import qualified Prelude
@@ -37,10 +38,11 @@ import System.FilePath
 import Nix.Derivation
 
 -- process
-import System.Process hiding ( env )
+import System.Process hiding ( env, system )
 
 -- text
-import Data.Text ( pack, unpack )
+import Data.Text ( Text, pack, unpack )
+import qualified Data.Text as T
 import Data.Text.IO ( readFile )
 
 
@@ -53,6 +55,10 @@ main = do
     case cmd of
       Nothing -> return []
       Just path -> return $ [ "--post-build-hook", path ]
+
+  -- TODO: this should be made into an option
+  -- (and probably should add options for prefixing at all, using emoji, and sorting also)
+  let skipPrefix = [ "required" ]
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
@@ -68,30 +74,49 @@ main = do
         return (pack (takeFileName drvPath), drvPath)
 
       Right drv ->
-        case Map.lookup "name" (env drv) of
-          Nothing ->
-            -- There was no 'name' environment variable, so we'll just use the
-            -- derivation name.
-            return (pack (takeFileName drvPath), drvPath)
-
-          Just name ->
-            return (name, drvPath)
+        let name = case Map.lookup "name" (env drv) of
+                      Nothing ->
+                      -- There was no 'name' environment variable, so we'll just use the
+                      -- derivation name.
+                        pack (takeFileName drvPath)
+                      Just n -> n
+            system = if name `elem` skipPrefix
+                     then ""
+                     else case Map.lookup "system" (env drv) of
+                            Nothing -> ""
+                            Just s -> emojify s <> ":"
+        in return (system <> name, drvPath)
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
 
   let steps = map (uncurry step) drvs
         where
-          step label drvPath =
+          step label drvPath = (label,
             object
               [ "label" .= unpack label
               , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
               , "key" .= stepify drvPath
               , "depends_on" .= dependencies
-              ]
+              ])
             where
               dependencies = map stepify $ filter (`elem` map snd drvs) $ drop 1 $ reachable drvPath g
 
-  Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
+  Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= map snd ( sortOn fst steps ) ]
+
+-- Transform nix platforms into buildkite emoji
+-- See https://github.com/buildkite/emojis
+emojify :: Text -> Text
+emojify system =
+  let (_,os) = T.breakOnEnd "-" system
+  in toEmoji os <> system
+  where
+    toEmoji "darwin" = ":darwin: "
+    toEmoji "freebsd" = ":freebsd: "
+    toEmoji "linux" = ":linux: "
+    toEmoji "netbsd" = ":netbsd: "
+    toEmoji "openbsd" = ":openbsd: "
+    toEmoji "windows" = ":windows: "
+    toEmoji _ = ""
 
 stepify :: String -> String
 stepify = take 99 . map replace . takeBaseName
