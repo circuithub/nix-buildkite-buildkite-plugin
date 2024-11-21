@@ -80,6 +80,8 @@ main = do
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
 
+  let jobSet = S.fromList $ map snd drvs
+
   -- Calculate the dependency graph
   -- For each vertex, we calculate its direct dependencies from the job set.
   -- This is:
@@ -90,7 +92,7 @@ main = do
           [(v, us) |
             v <- S.toList (vertexSet g),
             let nexts = S.toList $ postSet v g,
-            let (ins, outs) = partition (`elem` (map snd drvs)) nexts,
+            let (ins, outs) = partition (flip S.member jobSet) nexts,
             let us = S.unions $ (S.fromList ins):(map (\i -> fromMaybe S.empty $ Map.lookup i closureG) outs)
           ]
 
