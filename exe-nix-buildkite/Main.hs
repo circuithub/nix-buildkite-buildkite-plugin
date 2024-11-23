@@ -6,8 +6,7 @@
 module Main ( main ) where
 
 -- algebraic-graphs
-import Algebra.Graph.AdjacencyMap ( AdjacencyMap, edge, empty, hasVertex, overlay, overlays )
-import Algebra.Graph.AdjacencyMap.Algorithm ( reachable )
+import Algebra.Graph.AdjacencyMap ( AdjacencyMap, edge, empty, hasVertex, overlay, overlays, postSet, vertexSet)
 
 -- aeson
 import Data.Aeson ( Value(..), (.=), encode, object )
@@ -19,6 +18,7 @@ import Data.Attoparsec.Text ( parseOnly )
 import Data.Char
 import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Traversable ( for )
+import Data.List (partition)
 import qualified Prelude
 import Prelude hiding ( getContents, lines, readFile, words )
 import System.Environment ( getArgs, lookupEnv )
@@ -29,6 +29,7 @@ import qualified Data.ByteString.Lazy
 -- containers
 import Data.Containers.ListUtils ( nubOrd )
 import qualified Data.Map as Map
+import qualified Data.Set as S
 
 -- filepath
 import System.FilePath
@@ -40,7 +41,7 @@ import Nix.Derivation
 import System.Process hiding ( env )
 
 -- text
-import Data.Text ( pack, unpack )
+import Data.Text ( Text, pack, unpack )
 import Data.Text.IO ( readFile )
 
 
@@ -79,8 +80,25 @@ main = do
 
   g <- foldr (\(_, drv) m -> m >>= \g -> add g drv) (pure empty) drvs
 
+  let jobSet = S.fromList $ map snd drvs
+
+  -- Calculate the dependency graph
+  -- For each vertex, we calculate its direct dependencies from the job set.
+  -- This is:
+  -- - any direct dependencies that are in the job set (base case)
+  -- - the transitive job set dependencies of non-job set dependencies (recursive case)
+  let closureG =
+        Map.fromList
+          [(v, us) |
+            v <- S.toList (vertexSet g),
+            let nexts = S.toList $ postSet v g,
+            let (ins, outs) = partition (flip S.member jobSet) nexts,
+            let us = S.unions $ (S.fromList ins):(map (\i -> fromMaybe S.empty $ Map.lookup i closureG) outs)
+          ]
+
   let steps = map (uncurry step) drvs
         where
+          step :: Text -> FilePath -> Value
           step label drvPath =
             object
               [ "label" .= unpack label
@@ -89,7 +107,7 @@ main = do
               , "depends_on" .= dependencies
               ]
             where
-              dependencies = map stepify $ filter (`elem` map snd drvs) $ drop 1 $ reachable drvPath g
+              dependencies = map stepify $ maybe [] S.toList $ Map.lookup drvPath closureG
 
   Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
 
