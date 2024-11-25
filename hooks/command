@@ -9,6 +9,9 @@ if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_POST_BUILD_HOOK:-}" ]]; then
 fi
 
 echo "--- :nixos: Running nix-buildkite"
+echo $DIR
+echo "(import $DIR/../jobs.nix).nix-buildkite"
+ls "$DIR/.."
 nix-build -E "(import $DIR/../jobs.nix).nix-buildkite" -o nix-buildkite
 PIPELINE=$( ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
 rm nix-buildkite
