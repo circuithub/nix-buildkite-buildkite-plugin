@@ -2,6 +2,7 @@
 {-# language LambdaCase #-}
 {-# language NamedFieldPuns #-}
 {-# language OverloadedStrings #-}
+{-# language NumericUnderscores #-}
 
 module Main ( main ) where
 
@@ -22,9 +23,14 @@ import Data.List (partition)
 import qualified Prelude
 import Prelude hiding ( getContents, lines, readFile, words )
 import System.Environment ( getArgs, lookupEnv )
+import System.IO (hPutStrLn, stderr)
+import Text.Printf (printf)
 
 -- bytestring
 import qualified Data.ByteString.Lazy
+
+-- clock
+import System.Clock
 
 -- containers
 import Data.Containers.ListUtils ( nubOrd )
@@ -45,6 +51,18 @@ import Data.Text ( Text, pack, unpack )
 import Data.Text.IO ( readFile )
 
 
+withTime :: String -> IO a -> IO a
+withTime label k = do
+  before <- click
+  res <- k
+  after <- click
+  let delta = diffTimeSpec before after
+  hPutStrLn stderr $ printf "%s took %F seconds" label (fromIntegral (toNanoSecs delta) / (1_000_000_000 :: Double))
+  pure res
+  where
+    click = getTime Monotonic
+
+
 main :: IO ()
 main = do
   jobsExpr <- fromMaybe "./jobs.nix" . listToMaybe <$> getArgs
@@ -57,7 +75,7 @@ main = do
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- nubOrd . Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] ""
+  inputDrvPaths <- withTime "nix-instantiate" (nubOrd . Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
