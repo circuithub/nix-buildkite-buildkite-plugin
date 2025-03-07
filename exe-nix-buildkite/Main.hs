@@ -23,8 +23,9 @@ import Data.List (partition)
 import qualified Prelude
 import Prelude hiding ( getContents, lines, readFile, words )
 import System.Environment ( getArgs, lookupEnv )
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStrLn, hGetContents, stderr)
 import Text.Printf (printf)
+import qualified Data.List as List
 
 -- bytestring
 import qualified Data.ByteString.Lazy
@@ -62,6 +63,40 @@ withTime label k = do
   where
     click = getTime Monotonic
 
+nixInstantiate :: String -> IO [String]
+nixInstantiate jobsExpr = withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
+
+nixBuildDryRun :: String -> IO [String]
+nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" do
+  (_stdin, _stdout, stderrHndl, _prchndl) <- createProcess $ (proc "nix-build" ["--dry-run", jobsExpr]) { std_err = CreatePipe }
+
+  inputLines <- Prelude.lines <$> case stderrHndl of
+    Just hndl -> hGetContents hndl
+    Nothing -> pure []
+  -- See Note: [nix-build --dry-run output]
+  let stripLeadingWhitespace = dropWhile (==' ')
+  let theseLine = List.isPrefixOf "these"
+
+  -- dump the output to stderr
+  mapM_ (hPutStrLn stderr) inputLines
+
+  pure $ map stripLeadingWhitespace . takeWhile (not . theseLine) . drop 1 $ dropWhile (not . theseLine) inputLines
+
+-- Note: [nix-build --dry-run output]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- The output of `nix-build --dry-run` looks like this (on stderr! not stdout):
+-- > trace: ...
+-- > these 201 derivations will be built:
+-- >   /nix/store/foo.drv
+-- >   /nix/store/bar.drv
+-- >   /nix/store/baz.drv
+-- >   ...
+-- > these 499 paths will be fetched (1607.21 MiB download, 6356.04 MiB unpacked):
+-- >   /nix/store/foo1
+-- >   ...
+-- What we want to do is drop everything until the first line starting with "these", strip the leading whitespace,
+-- and grab everything until we get to the second "these"
+
 
 main :: IO ()
 main = do
@@ -73,9 +108,15 @@ main = do
       Nothing -> return []
       Just path -> return $ [ "--post-build-hook", path ]
 
+  useNixBuildDryRun <- do
+    e <- lookupEnv "SKIP_ALREADY_BUILT"
+    pure $ case e of
+      Nothing -> False
+      Just _ -> True
+
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- withTime "nix-instantiate" (nubOrd . Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
+  inputDrvPaths <- nubOrd <$> if useNixBuildDryRun then nixBuildDryRun jobsExpr else nixInstantiate jobsExpr
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
