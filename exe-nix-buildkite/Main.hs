@@ -26,6 +26,7 @@ import System.Environment ( getArgs, lookupEnv )
 import System.IO (hPutStrLn, hGetContents, stderr)
 import Text.Printf (printf)
 import qualified Data.List as List
+import System.Exit (ExitCode(..))
 
 -- bytestring
 import qualified Data.ByteString.Lazy
@@ -66,21 +67,24 @@ withTime label k = do
 nixInstantiate :: String -> IO [String]
 nixInstantiate jobsExpr = withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
 
-nixBuildDryRun :: String -> IO [String]
-nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" do
-  (_stdin, _stdout, stderrHndl, _prchndl) <- createProcess $ (proc "nix-build" ["--dry-run", jobsExpr]) { std_err = CreatePipe }
+nixBuildDryRun :: [String] -> IO [String]
+nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
+  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
+    inputLines <- Prelude.lines <$> case stderrHndl of
+      Just hndl -> hGetContents hndl
+      Nothing -> pure []
+    -- See Note: [nix-build --dry-run output]
+    let stripLeadingWhitespace = dropWhile (==' ')
+    let theseLine = List.isPrefixOf "these"
 
-  inputLines <- Prelude.lines <$> case stderrHndl of
-    Just hndl -> hGetContents hndl
-    Nothing -> pure []
-  -- See Note: [nix-build --dry-run output]
-  let stripLeadingWhitespace = dropWhile (==' ')
-  let theseLine = List.isPrefixOf "these"
+    -- dump the output to stderr
+    mapM_ (hPutStrLn stderr) inputLines
 
-  -- dump the output to stderr
-  mapM_ (hPutStrLn stderr) inputLines
-
-  pure $ map stripLeadingWhitespace . takeWhile (not . theseLine) . drop 1 $ dropWhile (not . theseLine) inputLines
+    let res = map stripLeadingWhitespace . takeWhile (not . theseLine) . drop 1 $ dropWhile (not . theseLine) inputLines
+    exitCode <- waitForProcess prchndl
+    case exitCode of
+      ExitSuccess -> pure res
+      ExitFailure err -> error $ "nix-build --dry run failed with exit code: " ++ show err
 
 -- Note: [nix-build --dry-run output]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
