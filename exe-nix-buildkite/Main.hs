@@ -76,11 +76,13 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
     -- See Note: [nix-build --dry-run output]
     let stripLeadingWhitespace = dropWhile (==' ')
     let theseLine = List.isPrefixOf "these"
+    let buildLine line = theseLine line && List.isSubsequenceOf "built" line
+    let fetchLine line = theseLine line && List.isSubsequenceOf "fetched" line
 
     -- dump the output to stderr
     mapM_ (hPutStrLn stderr) inputLines
 
-    let res = map stripLeadingWhitespace . takeWhile (not . theseLine) . drop 1 $ dropWhile (not . theseLine) inputLines
+    let res = map stripLeadingWhitespace . takeWhile (not . fetchLine) . drop 1 $ dropWhile (not . buildLine) inputLines
     exitCode <- waitForProcess prchndl
     case exitCode of
       ExitSuccess -> pure res
@@ -100,6 +102,8 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
 -- >   ...
 -- What we want to do is drop everything until the first line starting with "these", strip the leading whitespace,
 -- and grab everything until we get to the second "these"
+--
+-- NB: you might not have any derivations to be built.
 
 
 main :: IO ()
