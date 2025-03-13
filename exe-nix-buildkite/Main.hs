@@ -26,6 +26,7 @@ import System.Environment ( getArgs, lookupEnv )
 import System.IO (hPutStrLn, hGetContents, stderr)
 import Text.Printf (printf)
 import qualified Data.List as List
+import System.Exit (ExitCode(..))
 
 -- bytestring
 import qualified Data.ByteString.Lazy
@@ -66,21 +67,26 @@ withTime label k = do
 nixInstantiate :: String -> IO [String]
 nixInstantiate jobsExpr = withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
 
-nixBuildDryRun :: String -> IO [String]
-nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" do
-  (_stdin, _stdout, stderrHndl, _prchndl) <- createProcess $ (proc "nix-build" ["--dry-run", jobsExpr]) { std_err = CreatePipe }
+nixBuildDryRun :: [String] -> IO [String]
+nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
+  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
+    inputLines <- Prelude.lines <$> case stderrHndl of
+      Just hndl -> hGetContents hndl
+      Nothing -> pure []
+    -- See Note: [nix-build --dry-run output]
+    let stripLeadingWhitespace = dropWhile (==' ')
+    let theseLine = List.isPrefixOf "these"
+    let buildLine line = theseLine line && List.isSubsequenceOf "built" line
+    let fetchLine line = theseLine line && List.isSubsequenceOf "fetched" line
 
-  inputLines <- Prelude.lines <$> case stderrHndl of
-    Just hndl -> hGetContents hndl
-    Nothing -> pure []
-  -- See Note: [nix-build --dry-run output]
-  let stripLeadingWhitespace = dropWhile (==' ')
-  let theseLine = List.isPrefixOf "these"
+    -- dump the output to stderr
+    mapM_ (hPutStrLn stderr) inputLines
 
-  -- dump the output to stderr
-  mapM_ (hPutStrLn stderr) inputLines
-
-  pure $ map stripLeadingWhitespace . takeWhile (not . theseLine) . drop 1 $ dropWhile (not . theseLine) inputLines
+    let res = map stripLeadingWhitespace . takeWhile (not . fetchLine) . drop 1 $ dropWhile (not . buildLine) inputLines
+    exitCode <- waitForProcess prchndl
+    case exitCode of
+      ExitSuccess -> pure res
+      ExitFailure err -> error $ "nix-build --dry run failed with exit code: " ++ show err
 
 -- Note: [nix-build --dry-run output]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -96,6 +102,8 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" do
 -- >   ...
 -- What we want to do is drop everything until the first line starting with "these", strip the leading whitespace,
 -- and grab everything until we get to the second "these"
+--
+-- NB: you might not have any derivations to be built.
 
 
 main :: IO ()
@@ -108,19 +116,27 @@ main = do
       Nothing -> return []
       Just path -> return $ [ "--post-build-hook", path ]
 
-  useNixBuildDryRun <- do
+  skipAlreadyBuilt <- do
     e <- lookupEnv "SKIP_ALREADY_BUILT"
     pure $ case e of
+      Just "true" -> True
+      Just "false" -> False
+      Just _ -> error "SKIP_ALREADY_BUILT only accepts 'true' or 'false'."
       Nothing -> False
-      Just _ -> True
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- nubOrd <$> if useNixBuildDryRun then nixBuildDryRun jobsExpr else nixInstantiate jobsExpr
+  inputDrvPaths <- nubOrd <$> nixInstantiate jobsExpr
+
+  -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
+  pathsToBuild <- if skipAlreadyBuilt then nixBuildDryRun (inputDrvPaths) else pure inputDrvPaths
+
+  -- Filter our inputDrvs down to just those that will be built (if the skip already built flag is set)
+  let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
-  drvs <- for inputDrvPaths \drvPath -> do
+  drvs <- for inputDrvPathsToBuild \drvPath -> do
     fmap (parseOnly parseDerivation) (readFile drvPath) >>= \case
       Left _ ->
         -- We couldn't parse the derivation to get a name, so we'll just use the
