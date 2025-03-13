@@ -115,8 +115,10 @@ main = do
   useNixBuildDryRun <- do
     e <- lookupEnv "SKIP_ALREADY_BUILT"
     pure $ case e of
+      Just "true" -> True
+      Just "false" -> False
+      Just _ -> error "SKIP_ALREADY_BUILT only accepts 'true' or 'false'."
       Nothing -> False
-      Just _ -> True
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
