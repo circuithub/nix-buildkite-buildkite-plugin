@@ -112,7 +112,7 @@ main = do
       Nothing -> return []
       Just path -> return $ [ "--post-build-hook", path ]
 
-  useNixBuildDryRun <- do
+  skipAlreadyBuilt <- do
     e <- lookupEnv "SKIP_ALREADY_BUILT"
     pure $ case e of
       Just "true" -> True
@@ -122,11 +122,17 @@ main = do
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- nubOrd <$> if useNixBuildDryRun then nixBuildDryRun jobsExpr else nixInstantiate jobsExpr
+  inputDrvPaths <- nubOrd <$> nixInstantiate jobsExpr
+
+  -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
+  pathsToBuild <- if skipAlreadyBuilt then nixBuildDryRun (inputDrvPaths) else pure inputDrvPaths
+
+  -- Filter our inputDrvs down to just those that will be built (if the skip already built flag is set)
+  let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
-  drvs <- for inputDrvPaths \drvPath -> do
+  drvs <- for inputDrvPathsToBuild \drvPath -> do
     fmap (parseOnly parseDerivation) (readFile drvPath) >>= \case
       Left _ ->
         -- We couldn't parse the derivation to get a name, so we'll just use the
