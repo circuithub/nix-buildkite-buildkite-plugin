@@ -75,7 +75,7 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
       Nothing -> pure []
     -- See Note: [nix-build --dry-run output]
     let stripLeadingWhitespace = dropWhile (==' ')
-    let theseLine = List.isPrefixOf "these"
+    let theseLine line = List.isPrefixOf "these" line || List.isPrefixOf "this" line
     let buildLine line = theseLine line && List.isSubsequenceOf "built" line
     let fetchLine line = theseLine line && List.isSubsequenceOf "fetched" line
 
@@ -104,6 +104,8 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
 -- and grab everything until we get to the second "these"
 --
 -- NB: you might not have any derivations to be built.
+--
+-- NB: if only one deriviation needs to be built, then you need to look out for "this" rather than "these"
 
 
 main :: IO ()
