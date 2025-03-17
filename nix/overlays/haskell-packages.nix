@@ -8,14 +8,14 @@ let
 
   inherit (haskell.lib) appendConfigureFlag packagesFromDirectory;
 
-  inherit (super.lib) composeExtensions;
+  inherit (super.lib) composeExtensions cleanSource;
   
   WError =
     drv: appendConfigureFlag drv "--ghc-option=-Werror";
 
   configurations =
-    self: super: {
-      nix-buildkite = WError (callCabal2nix "nix-buildkite" (builtins.path { path = ../../.; name = "nix-buildkite"; }) {});
+    _self: _super: {
+      nix-buildkite = WError (callCabal2nix "nix-buildkite" (cleanSource ../../.) {});
     };
 
 in
