@@ -88,6 +88,12 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
       ExitSuccess -> pure res
       ExitFailure err -> error $ "nix-build --dry run failed with exit code: " ++ show err
 
+copyDrvsToCache :: [String] -> String -> IO ()
+copyDrvsToCache jobs cache = withTime "copying drvs to cache" do
+  hPutStrLn stderr "copying drvs to cache"
+  callProcess "nix" $ ["copy", "--to", cache] ++ jobs
+
+
 -- Note: [nix-build --dry-run output]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 -- The output of `nix-build --dry-run` looks like this (on stderr! not stdout):
@@ -125,6 +131,8 @@ main = do
       Just "false" -> False
       Just _ -> error "SKIP_ALREADY_BUILT only accepts 'true' or 'false'."
       Nothing -> False
+
+  mCopyDrvToCache <- lookupEnv "COPY_DRV_TO_CACHE"
 
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
@@ -179,14 +187,25 @@ main = do
           step label drvPath =
             object
               [ "label" .= unpack label
-              , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
+              , "command" .= String (pack command)
               , "key" .= stepify drvPath
               , "depends_on" .= dependencies
               ]
             where
+              command = copyFromCache ++ realise
+              quote str = "'" ++ str ++ "'"
+              copyFromCache = case mCopyDrvToCache of
+                Nothing -> ""
+                Just cache -> unwords $ ["nix", "copy", "--from",  quote cache, drvPath, "&&"]
+              realise = unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ]
               dependencies = map stepify $ maybe [] S.toList $ Map.lookup drvPath closureG
 
   Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
+
+  case mCopyDrvToCache of
+    Nothing -> pure ()
+    Just cache -> copyDrvsToCache (S.toList jobSet) cache
+
 
 stepify :: String -> String
 stepify = take 99 . map replace . takeBaseName
