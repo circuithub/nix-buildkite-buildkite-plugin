@@ -1,4 +1,7 @@
 steps:
+  - command: cabal test
+    label: ":test_tube: Tests"
+  - wait
   - command: nix-buildkite
     label: ":nixos: :buildkite:"
     plugins:

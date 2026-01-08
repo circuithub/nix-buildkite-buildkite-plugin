@@ -7,7 +7,8 @@
 module Main ( main ) where
 
 -- algebraic-graphs
-import Algebra.Graph.AdjacencyMap ( AdjacencyMap, edge, empty, hasVertex, overlay, overlays, postSet, vertexSet)
+import Algebra.Graph.AdjacencyMap ( AdjacencyMap, edge, empty, hasVertex, overlay, overlays, postSet, preSet, vertices, vertexSet )
+import qualified Algebra.Graph.AdjacencyMap.Algorithm as AMA
 
 -- aeson
 import Data.Aeson ( Value(..), (.=), encode, object )
@@ -17,11 +18,13 @@ import Data.Attoparsec.Text ( parseOnly )
 
 -- base
 import Data.Char
-import Data.Maybe ( fromMaybe, listToMaybe )
+import Data.Maybe ( fromMaybe, listToMaybe, mapMaybe )
+import Data.Foldable ( toList )
 import Data.Traversable ( for )
 import Data.List (partition)
 import qualified Prelude
 import Prelude hiding ( getContents, lines, readFile, words )
+import Text.Read ( readMaybe )
 import System.Environment ( getArgs, lookupEnv )
 import System.IO (hPutStrLn, hGetContents, stderr)
 import Text.Printf (printf)
@@ -29,7 +32,7 @@ import qualified Data.List as List
 import System.Exit (ExitCode(..))
 
 -- bytestring
-import qualified Data.ByteString.Lazy
+import qualified Data.ByteString.Lazy.Char8 as BL
 
 -- clock
 import System.Clock
@@ -126,6 +129,13 @@ main = do
       Just _ -> error "SKIP_ALREADY_BUILT only accepts 'true' or 'false'."
       Nothing -> False
 
+  -- Batch size for pipeline uploads (Buildkite has a 500 job limit per upload)
+  batchSize <- do
+    e <- lookupEnv "BATCH_SIZE"
+    pure $ case e of
+      Nothing -> 450
+      Just s -> fromMaybe (error "BATCH_SIZE must be a positive integer") (readMaybe s)
+
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
   inputDrvPaths <- nubOrd <$> nixInstantiate jobsExpr
@@ -159,35 +169,70 @@ main = do
 
   let jobSet = S.fromList $ map snd drvs
 
-  -- Calculate the dependency graph
-  -- For each vertex, we calculate its direct dependencies from the job set.
-  -- This is:
+  -- See Note [Pipeline batching]
+  -- Build the job dependency graph directly.
+  -- For each vertex, we calculate its direct job dependencies:
   -- - any direct dependencies that are in the job set (base case)
-  -- - the transitive job set dependencies of non-job set dependencies (recursive case)
-  let closureG =
-        Map.fromList
-          [(v, us) |
-            v <- S.toList (vertexSet g),
-            let nexts = S.toList $ postSet v g,
-            let (ins, outs) = partition (flip S.member jobSet) nexts,
-            let us = S.unions $ (S.fromList ins):(map (\i -> fromMaybe S.empty $ Map.lookup i closureG) outs)
+  -- - the job dependencies of non-job dependencies (recursive case)
+  -- This collapses paths through non-job intermediates but stops at jobs,
+  -- so it's not a full transitive closure (we don't want jobC to depend on
+  -- jobA if jobC -> jobB -> jobA, since Buildkite handles that).
+  -- We use a Map for memoization during the recursive computation.
+  let depsOf v = fromMaybe S.empty $ Map.lookup v depsMap
+        where
+          depsMap = Map.fromList
+            [(v', us) |
+              v' <- S.toList (vertexSet g),
+              let nexts = S.toList $ postSet v' g,
+              let (ins, outs) = partition (`S.member` jobSet) nexts,
+              let us = S.unions $ S.fromList ins : map depsOf outs
+            ]
+
+  let jobGraph :: AdjacencyMap FilePath
+      jobGraph = overlay (vertices $ S.toList jobSet) $
+        overlays
+          [ overlays [edge dep job | dep <- S.toList (depsOf job)]  -- edge from dependency to dependent
+          | job <- S.toList jobSet
           ]
 
-  let steps = map (uncurry step) drvs
+  -- Topological sort: dependencies come before dependents.
+  -- For edge (A -> B), topSort returns A before B. Our edges go from dependency to dependent,
+  -- so dependencies come first in the result.
+  let sortedDrvPaths = case AMA.topSort jobGraph of
+        Left depCycle -> error $ "Dependency cycle detected: " ++ unwords (toList depCycle)
+        Right sorted -> sorted
+
+  -- Create a map from drvPath to label for quick lookup
+  let drvLabels = Map.fromList [(drvPath, label) | (label, drvPath) <- drvs]
+
+  -- Map sorted paths back to (label, path) pairs
+  let sortedDrvs = mapMaybe (\drvPath -> fmap (\label -> (label, drvPath)) (Map.lookup drvPath drvLabels)) sortedDrvPaths
+
+  let step :: Text -> FilePath -> Value
+      step label drvPath =
+        object
+          [ "label" .= unpack label
+          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
+          , "key" .= stepify drvPath
+          , "depends_on" .= dependencies
+          ]
         where
-          step :: Text -> FilePath -> Value
-          step label drvPath =
-            object
-              [ "label" .= unpack label
-              , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
-              , "key" .= stepify drvPath
-              , "depends_on" .= dependencies
-              ]
-            where
-              dependencies = map stepify $ maybe [] S.toList $ Map.lookup drvPath closureG
+          dependencies = map stepify $ S.toList $ preSet drvPath jobGraph
 
-  Data.ByteString.Lazy.putStr $ encode $ object [ "steps" .= steps ]
+  let steps = map (uncurry step) sortedDrvs
 
+  -- Split steps into batches and output one JSON object per line
+  let batches = chunksOf batchSize steps
+  mapM_ (\batch -> BL.putStrLn $ encode $ object [ "steps" .= batch ]) batches
+
+-- | Split a list into chunks of at most n elements.
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs = take n xs : chunksOf n (drop n xs)
+
+-- | Convert a derivation path to a valid Buildkite step key.
+-- Buildkite step keys are limited to 100 characters and may only contain
+-- alphanumeric characters, '/', and '-'.
 stepify :: String -> String
 stepify = take 99 . map replace . takeBaseName
   where
@@ -195,7 +240,6 @@ stepify = take 99 . map replace . takeBaseName
     replace '/' = '/'
     replace '-' = '-'
     replace _ = '_'
-
 
 add :: AdjacencyMap FilePath -> FilePath -> IO (AdjacencyMap FilePath)
 add g drvPath =
@@ -213,3 +257,17 @@ add g drvPath =
         let g' = overlays (edge drvPath <$> Map.keys inputDrvs)
 
         return $ overlay deps g'
+
+{- Note [Pipeline batching]
+
+Buildkite has a limit of 500 jobs per pipeline upload. To support larger
+pipelines, we split the steps into batches and output one JSON object per
+line. The calling shell script uploads each batch sequentially.
+
+We topologically sort the steps so that dependencies appear before the steps
+that depend on them. This ensures that when uploading batches sequentially,
+a step's dependencies are always uploaded in an earlier (or the same) batch.
+Buildkite resolves `depends_on` references across separate uploads, so this
+ordering is sufficient for correctness.
+-}
+

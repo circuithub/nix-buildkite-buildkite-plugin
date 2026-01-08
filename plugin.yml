@@ -10,10 +10,13 @@ configuration:
       type: string
     skip-already-built:
       type: string
+    batch-size:
+      type: integer
   required:
     - file
   not:
     required:
       - post-build-hook
       - skip-already-built
+      - batch-size
   additionalProperties: false
