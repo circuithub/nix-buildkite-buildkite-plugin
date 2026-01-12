@@ -6,7 +6,7 @@ let
 
   inherit (haskellPackages) callCabal2nix;
 
-  inherit (haskell.lib) appendConfigureFlag packagesFromDirectory;
+  inherit (haskell.lib) appendConfigureFlag dontCheck packagesFromDirectory;
 
   inherit (super.lib) composeExtensions cleanSource;
   
@@ -15,7 +15,8 @@ let
 
   configurations =
     _self: _super: {
-      nix-buildkite = WError (callCabal2nix "nix-buildkite" (cleanSource ../../.) {});
+      # Tests require nix-instantiate which isn't available in the nix sandbox
+      nix-buildkite = dontCheck (WError (callCabal2nix "nix-buildkite" (cleanSource ../../.) {}));
     };
 
 in

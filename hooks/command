@@ -12,10 +12,23 @@ if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_SKIP_ALREADY_BUILT:-}" ]]; then
     export SKIP_ALREADY_BUILT=true
 fi
 
+if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_BATCH_SIZE:-}" ]]; then
+    export BATCH_SIZE="$BUILDKITE_PLUGIN_NIX_BUILDKITE_BATCH_SIZE"
+fi
+
 echo "--- :nixos: Running nix-buildkite"
 nix-build -E "(import $DIR/../jobs.nix).nix-buildkite" -o nix-buildkite
 PIPELINE=$( ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
 rm nix-buildkite
 
 echo "--- :pipeline: Uploading pipeline"
-echo "$PIPELINE" | buildkite-agent pipeline upload
+# Pipeline output is one JSON object per line (batches for large pipelines)
+BATCH_NUM=0
+TOTAL_BATCHES=$(echo "$PIPELINE" | wc -l)
+echo "$PIPELINE" | while IFS= read -r batch; do
+    BATCH_NUM=$((BATCH_NUM + 1))
+    if [[ "$TOTAL_BATCHES" -gt 1 ]]; then
+        echo "Uploading batch $BATCH_NUM of $TOTAL_BATCHES"
+    fi
+    echo "$batch" | buildkite-agent pipeline upload
+done
