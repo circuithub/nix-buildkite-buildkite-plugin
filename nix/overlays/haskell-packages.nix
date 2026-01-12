@@ -9,13 +9,15 @@ let
   inherit (haskell.lib) appendConfigureFlag dontCheck packagesFromDirectory;
 
   inherit (super.lib) composeExtensions cleanSource;
-  
+
   WError =
     drv: appendConfigureFlag drv "--ghc-option=-Werror";
 
   configurations =
     _self: _super: {
-      # Tests require nix-instantiate which isn't available in the nix sandbox
+      # Tests require nix-instantiate to run, which needs access to /nix/var
+      # and the nix daemon. These aren't available inside the nix sandbox,
+      # so we disable tests here and run them separately in CI.
       nix-buildkite = dontCheck (WError (callCabal2nix "nix-buildkite" (cleanSource ../../.) {}));
     };
 

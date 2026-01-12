@@ -7,23 +7,32 @@ maintainer:          oliver.charles@circuithub.com
 build-type:          Simple
 extra-source-files:  CHANGELOG.md, README.md
 
+library
+  exposed-modules:     NixBuildkite
+  hs-source-dirs:      src
+  build-depends:       aeson ^>= 1.4.6.0 || ^>= 1.5.4.0
+                     , algebraic-graphs ^>= 0.5
+                     , base ^>= 4.12 || ^>= 4.13 || ^>= 4.14
+                     , bytestring ^>= 0.10.8.2
+                     , containers ^>= 0.6.0.1
+                     , filepath ^>= 1.4.2.1
+                     , process ^>= 1.6.5.0
+                     , text ^>= 1.2.3.1
+                     , attoparsec ^>= 0.13.2.3
+                     , nix-derivation ^>= 1.1.1
+                     , clock ^>= 0.8
+  default-language:    Haskell2010
+  ghc-options:         -Wcompat -Wall
+
 executable nix-buildkite
   main-is:             Main.hs
-  build-depends:   aeson ^>= 1.4.6.0 || ^>= 1.5.4.0
-                 , algebraic-graphs ^>= 0.5
-                 , base ^>= 4.12 || ^>= 4.13 || ^>= 4.14
-                 , bytestring ^>= 0.10.8.2
-                 , containers ^>= 0.6.0.1
-                 , filepath ^>= 1.4.2.1
-                 , process ^>= 1.6.5.0
-                 , text ^>= 1.2.3.1
-                 , unordered-containers ^>= 0.2.10.0
-                 , attoparsec ^>= 0.13.2.3
-                 , nix-derivation ^>= 1.1.1
-                 , clock ^>= 0.8
+  build-depends:       base ^>= 4.12 || ^>= 4.13 || ^>= 4.14
+                     , aeson ^>= 1.4.6.0 || ^>= 1.5.4.0
+                     , bytestring ^>= 0.10.8.2
+                     , nix-buildkite
   default-language:    Haskell2010
   hs-source-dirs:      exe-nix-buildkite
-  ghc-options: -Wcompat -Wall -fwarn-incomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -Wredundant-constraints -Wmissing-export-lists
+  ghc-options:         -Wcompat -Wall
 
 test-suite nix-buildkite-tests
   type:                exitcode-stdio-1.0
@@ -31,8 +40,7 @@ test-suite nix-buildkite-tests
   hs-source-dirs:      test
   build-depends:       base ^>= 4.12 || ^>= 4.13 || ^>= 4.14
                      , aeson ^>= 1.4.6.0 || ^>= 1.5.4.0
-                     , bytestring ^>= 0.10.8.2
-                     , process ^>= 1.6.5.0
+                     , nix-buildkite
                      , tasty
                      , tasty-hunit
                      , text ^>= 1.2.3.1

@@ -1,4 +1,6 @@
 steps:
+  - command: nix-shell --run "cabal test"
+    label: ":test_tube: Run tests"
   - command: nix-buildkite
     label: ":nixos: :buildkite:"
     plugins:
