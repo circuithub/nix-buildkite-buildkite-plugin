@@ -125,18 +125,36 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
 
   g <- foldr (\(_, drv) m -> m >>= \g' -> add g' drv) (pure empty) drvs
 
+  -- A subset of our derivations which we want to see in Buildkite.
+  -- These are the derivations we get as a result of running `nix-instantiate`
   let jobSet = S.fromList $ map snd drvs
 
-  -- See Note [Pipeline batching]
+  -- Calculate the dependencies for each job.
   --
-  -- Build the job dependency graph. Conceptually, we want:
+  -- Jobs may depend on other jobs through non-job derivations, eg,
+  -- jobA -> intermediate1 -> intermediate2 -> jobB
+  -- means that jobA depends on jobB.
+  --
+  -- Conceptually, we want:
   --   transitive closure of g → restrict to jobs → transitive reduction
   -- This gives us direct job-to-job dependencies, collapsing through non-job intermediates
   -- (e.g., jobB -> intermediate -> jobA becomes jobB -> jobA) but without redundant edges
   -- (e.g., if jobC -> jobB -> jobA, we don't want jobC -> jobA since Buildkite handles that).
   --
-  -- Since algebraic-graphs doesn't provide transitive reduction, we compute this directly
-  -- by recursing through non-job nodes but stopping at jobs. We use a Map for memoization.
+  -- To compute this would require taking the transitive closure of the graph,
+  -- but that would end up with something O(V^2). And we cannot have a quadratic step.
+  --
+  -- Writing out the definition explicitly:
+  --   Deriviation A depends on Job B iff
+  --    there is a path starting at A consisting of zero or more non-job edges
+  --    and then an edge leading to B.
+  --
+  -- This leads to a recursive algorithm:
+  --   - (Base case): direct dependency between A and B
+  --   - (Inductive step): A depends on some derivation C and C depends on Job B.
+  --
+  -- We memoize this with a lazy Map (NB: a strict map would diverge).
+  -- This terminates if we don't have cycles.
   let depsOf v = fromMaybe S.empty $ Map.lookup v depsMap
         where
           depsMap = Map.fromList
@@ -157,6 +175,8 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
   -- Topological sort: dependencies come before dependents.
   -- For edge (A -> B), topSort returns A before B. Our edges go from dependency to dependent,
   -- so dependencies come first in the result.
+  --
+  -- See Note [Pipeline batching]
   let sortedDrvPaths = case AMA.topSort jobGraph of
         Left depCycle -> error $ "Dependency cycle detected: " ++ unwords (toList depCycle)
         Right sorted -> sorted
