@@ -170,14 +170,15 @@ main = do
   let jobSet = S.fromList $ map snd drvs
 
   -- See Note [Pipeline batching]
-  -- Build the job dependency graph directly.
-  -- For each vertex, we calculate its direct job dependencies:
-  -- - any direct dependencies that are in the job set (base case)
-  -- - the job dependencies of non-job dependencies (recursive case)
-  -- This collapses paths through non-job intermediates but stops at jobs,
-  -- so it's not a full transitive closure (we don't want jobC to depend on
-  -- jobA if jobC -> jobB -> jobA, since Buildkite handles that).
-  -- We use a Map for memoization during the recursive computation.
+  --
+  -- Build the job dependency graph. Conceptually, we want:
+  --   transitive closure of g → restrict to jobs → transitive reduction
+  -- This gives us direct job-to-job dependencies, collapsing through non-job intermediates
+  -- (e.g., jobB -> intermediate -> jobA becomes jobB -> jobA) but without redundant edges
+  -- (e.g., if jobC -> jobB -> jobA, we don't want jobC -> jobA since Buildkite handles that).
+  --
+  -- Since algebraic-graphs doesn't provide transitive reduction, we compute this directly
+  -- by recursing through non-job nodes but stopping at jobs. We use a Map for memoization.
   let depsOf v = fromMaybe S.empty $ Map.lookup v depsMap
         where
           depsMap = Map.fromList
