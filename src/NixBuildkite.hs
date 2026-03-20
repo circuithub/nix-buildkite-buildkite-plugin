@@ -31,6 +31,7 @@ import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Foldable ( toList )
 import Data.Traversable ( for )
 import Data.List ( partition )
+import qualified Data.List
 import qualified Prelude
 import Prelude hiding ( readFile )
 import System.IO ( hPutStrLn, hGetContents, stderr )
@@ -78,13 +79,20 @@ defaultConfig = Config
   , configBatchSize = 450
   }
 
+-- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
+-- This is the syntax for showing that we are talking about a particular output.
+-- We do not want this in our drvs since we want to open the file and there is no such file when the
+-- bang is included.
+removeBang :: String -> String
+removeBang str = Data.List.takeWhile (/='!') str
+
 -- | Generate pipeline batches from a jobs.nix file.
 -- Returns a list of batches, where each batch is a list of Buildkite step values.
 generatePipeline :: Config -> FilePath -> IO [[Value]]
 generatePipeline config jobsExpr = do
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- nubOrd <$> nixInstantiate jobsExpr
+  inputDrvPaths <- nubOrd . map removeBang <$> nixInstantiate jobsExpr
 
   -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
   pathsToBuild <- if configSkipAlreadyBuilt config
