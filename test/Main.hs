@@ -37,6 +37,16 @@ tests = testGroup "nix-buildkite"
       [ testCase "each batch respects BATCH_SIZE limit" testBatchSizeLimit
       , testCase "batch sizes correctly distributed" testBatchDistribution
       ]
+  , testGroup "Max steps"
+      [ testCase "collapses to one job when exceeded" testMaxStepsCollapses
+      , testCase "does not collapse at the limit" testMaxStepsAtLimit
+      , testCase "no limit leaves the pipeline unchanged" testMaxStepsUnset
+      ]
+  , testGroup "Max concurrency"
+      [ testCase "collapses when too many jobs could run at once" testMaxConcurrencyCollapses
+      , testCase "does not collapse at the limit" testMaxConcurrencyAtLimit
+      , testCase "uses the antichain, not the job count" testMaxConcurrencyAntichain
+      ]
   ]
 
 -- | Run the pipeline generator with the given batch size
@@ -46,6 +56,10 @@ runWithBatchSize batchSize jobsFile = do
         { configBatchSize = maybe (configBatchSize defaultConfig) id batchSize
         }
   generatePipeline config jobsFile
+
+-- | Run the pipeline generator with a tweaked default config.
+runWith :: (Config -> Config) -> FilePath -> IO [[Value]]
+runWith tweak = generatePipeline (tweak defaultConfig)
 
 -- | Get all steps from all batches
 getAllSteps :: [[Value]] -> [Value]
@@ -70,6 +84,28 @@ getDependsOn step = case getField "depends_on" step of
   where
     extractString (String t) = Just t
     extractString _ = Nothing
+
+-- | Get the command from a step
+getCommand :: Value -> T.Text
+getCommand step = case getField "command" step of
+  Just (String t) -> t
+  _ -> ""
+
+-- | Get the key from a step
+getKey :: Value -> Maybe T.Text
+getKey step = case getField "key" step of
+  Just (String t) -> Just t
+  _ -> Nothing
+
+-- | The fixed key of the single "build everything" job emitted on collapse.
+buildAllKey :: T.Text
+buildAllKey = "nix-buildkite-build-all"
+
+-- | A pipeline is "collapsed" when it is a single build-everything step.
+isCollapsed :: [[Value]] -> Bool
+isCollapsed batches = case getAllSteps batches of
+  [step] -> getKey step == Just buildAllKey
+  _      -> False
 
 independentJobsFile :: FilePath
 independentJobsFile = "test/fixtures/independent-jobs.nix"
@@ -178,3 +214,63 @@ testBatchDistribution = do
     insert x (y:ys)
       | x <= y = x : y : ys
       | otherwise = y : insert x ys
+
+-- Tests for the max-steps collapse threshold
+
+-- | 5 independent jobs with a limit of 3 collapse into one build-everything job.
+testMaxStepsCollapses :: IO ()
+testMaxStepsCollapses = do
+  batches <- runWith (\c -> c { configMaxSteps = Just 3 }) independentJobsFile
+  assertEqual "should be a single batch" 1 (length batches)
+  case getAllSteps batches of
+    [step] -> do
+      assertEqual "collapsed step key" (Just buildAllKey) (getKey step)
+      let cmd = getCommand step
+      assertBool "builds with --keep-going" ("--keep-going" `T.isInfixOf` cmd)
+      assertBool "posts a failure annotation" ("buildkite-agent annotate" `T.isInfixOf` cmd)
+      assertBool "references every job" $
+        all (`T.isInfixOf` cmd) ["job1", "job2", "job3", "job4", "job5"]
+      assertEqual "has no dependencies" [] (getDependsOn step)
+    steps -> assertEqual "should collapse to exactly one step" 1 (length steps)
+
+-- | At the limit (5 jobs, limit 5) the pipeline is not collapsed.
+testMaxStepsAtLimit :: IO ()
+testMaxStepsAtLimit = do
+  batches <- runWith (\c -> c { configMaxSteps = Just 5 }) independentJobsFile
+  assertBool "should not collapse at the limit" (not (isCollapsed batches))
+  assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
+
+-- | With no limit set, behaviour is unchanged.
+testMaxStepsUnset :: IO ()
+testMaxStepsUnset = do
+  batches <- runWith id independentJobsFile
+  assertBool "should not collapse" (not (isCollapsed batches))
+  assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
+
+-- Tests for the max-concurrency (maximum antichain) collapse threshold
+
+-- | 5 independent jobs can all run at once (concurrency 5), so a limit of 4
+-- collapses.
+testMaxConcurrencyCollapses :: IO ()
+testMaxConcurrencyCollapses = do
+  batches <- runWith (\c -> c { configMaxConcurrency = Just 4 }) independentJobsFile
+  assertBool "should collapse when more jobs could run at once than the limit" (isCollapsed batches)
+
+-- | At the limit (concurrency 5, limit 5) the pipeline is not collapsed.
+testMaxConcurrencyAtLimit :: IO ()
+testMaxConcurrencyAtLimit = do
+  batches <- runWith (\c -> c { configMaxConcurrency = Just 5 }) independentJobsFile
+  assertBool "should not collapse at the limit" (not (isCollapsed batches))
+  assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
+
+-- | dependent-jobs has 5 jobs but at most 3 can run concurrently (its maximum
+-- antichain, e.g. jobC, jobD, jobE), so a limit of 3 does NOT collapse even
+-- though there are 5 jobs, while a limit of 2 does. This pins that we trigger
+-- on the antichain, not the raw job count.
+testMaxConcurrencyAntichain :: IO ()
+testMaxConcurrencyAntichain = do
+  atLimit <- runWith (\c -> c { configMaxConcurrency = Just 3 }) dependentJobsFile
+  assertBool "concurrency 3 should not collapse at limit 3" (not (isCollapsed atLimit))
+  assertEqual "should keep all 5 steps" 5 (length (getAllSteps atLimit))
+  below <- runWith (\c -> c { configMaxConcurrency = Just 2 }) dependentJobsFile
+  assertBool "concurrency 3 should collapse at limit 2" (isCollapsed below)

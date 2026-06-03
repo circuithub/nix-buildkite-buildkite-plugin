@@ -30,10 +30,29 @@ main = do
       Nothing -> configBatchSize defaultConfig
       Just s -> fromMaybe (error "BATCH_SIZE must be a positive integer") (readMaybe s)
 
+  -- If set, collapse to a single "build everything" job once the pipeline would
+  -- exceed this many steps. Unset means no limit.
+  maxSteps <- do
+    e <- lookupEnv "MAX_STEPS"
+    pure $ case e of
+      Nothing -> Nothing
+      Just s -> Just $ fromMaybe (error "MAX_STEPS must be a positive integer") (readMaybe s)
+
+  -- If set, collapse to a single "build everything" job once the peak number of
+  -- jobs that could run concurrently (the job graph's maximum antichain)
+  -- exceeds this. Unset means no limit.
+  maxConcurrency <- do
+    e <- lookupEnv "MAX_CONCURRENCY"
+    pure $ case e of
+      Nothing -> Nothing
+      Just s -> Just $ fromMaybe (error "MAX_CONCURRENCY must be a positive integer") (readMaybe s)
+
   let config = Config
         { configPostBuildHook = postBuildHook
         , configSkipAlreadyBuilt = skipAlreadyBuilt
         , configBatchSize = batchSize
+        , configMaxSteps = maxSteps
+        , configMaxConcurrency = maxConcurrency
         }
 
   batches <- generatePipeline config jobsExpr

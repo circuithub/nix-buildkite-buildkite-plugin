@@ -12,6 +12,10 @@ configuration:
       type: string
     batch-size:
       type: integer
+    max-steps:
+      type: integer
+    max-concurrency:
+      type: integer
   required:
     - file
   not:
@@ -19,4 +23,6 @@ configuration:
       - post-build-hook
       - skip-already-built
       - batch-size
+      - max-steps
+      - max-concurrency
   additionalProperties: false
