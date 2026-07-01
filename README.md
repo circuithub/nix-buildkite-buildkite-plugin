@@ -125,9 +125,11 @@ uploads to your binary cache):
 
 With these set, the collapsed job uploads every derivation that *succeeds* to
 the cache as it goes. On a re-run, `nix-build --dry-run` then reports only the
-failures and their blocked dependents — a much smaller set that typically drops
-back under your threshold, so the re-run produces granular per-job steps for
-exactly the things that still need building, at the cost of one re-evaluation.
+failures and their still-unbuilt dependents. If the failures were towards the
+*leaves* of the build graph, that is a much smaller set that drops back under
+your threshold, so the re-run produces granular per-job steps for exactly what
+still needs building, at the cost of one re-evaluation. Failures near the *root*
+leave most of the graph unbuilt, so the re-run may just collapse again.
 
 ## Sit Back and Enjoy!
 

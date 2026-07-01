@@ -27,10 +27,13 @@ if [ "$status" -ne 0 ]; then
   # failed, deduped; the store path names each one. nix reports these as
   # "Cannot build '<drv>'" / "builder for '<drv>' failed" lines.
   echo "+++ :x: Some builds failed"
-  echo "Re-run the pipeline to get a granular per-job step for each of these:"
+  echo "These derivations could not be built:"
   echo
   grep -E "Cannot build '|builder for '.* failed" "$log" \
     | grep -oE "/nix/store/[^ ']+\.drv" | sort -u
+  echo
+  echo "If the failing builds were towards the leaves of the build graph, then"
+  echo "re-running the pipeline may give a more granular build step graph."
 fi
 
 exit "$status"
