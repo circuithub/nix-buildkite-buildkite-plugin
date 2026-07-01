@@ -34,5 +34,9 @@ echo "$PIPELINE" | while IFS= read -r batch; do
     if [[ "$TOTAL_BATCHES" -gt 1 ]]; then
         echo "Uploading batch $BATCH_NUM of $TOTAL_BATCHES"
     fi
-    echo "$batch" | buildkite-agent pipeline upload
+    # --no-interpolation: the steps are fully resolved by nix-buildkite (concrete
+    # store paths, sanitized keys), so there is nothing for Buildkite to
+    # interpolate. Leaving it on would try to expand shell syntax like the
+    # collapsed job's ${drvs[@]} array and fail the upload.
+    echo "$batch" | buildkite-agent pipeline upload --no-interpolation
 done
