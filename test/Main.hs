@@ -42,11 +42,6 @@ tests = testGroup "nix-buildkite"
       , testCase "does not collapse at the limit" testMaxStepsAtLimit
       , testCase "no limit leaves the pipeline unchanged" testMaxStepsUnset
       ]
-  , testGroup "Max concurrency"
-      [ testCase "collapses when too many jobs could run at once" testMaxConcurrencyCollapses
-      , testCase "does not collapse at the limit" testMaxConcurrencyAtLimit
-      , testCase "uses the antichain, not the job count" testMaxConcurrencyAntichain
-      ]
   ]
 
 -- | Run the pipeline generator with the given batch size
@@ -227,7 +222,6 @@ testMaxStepsCollapses = do
       assertEqual "collapsed step key" (Just buildAllKey) (getKey step)
       let cmd = getCommand step
       assertBool "builds with --keep-going" ("--keep-going" `T.isInfixOf` cmd)
-      assertBool "posts a failure annotation" ("buildkite-agent annotate" `T.isInfixOf` cmd)
       assertBool "references every job" $
         all (`T.isInfixOf` cmd) ["job1", "job2", "job3", "job4", "job5"]
       assertEqual "has no dependencies" [] (getDependsOn step)
@@ -246,31 +240,3 @@ testMaxStepsUnset = do
   batches <- runWith id independentJobsFile
   assertBool "should not collapse" (not (isCollapsed batches))
   assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
-
--- Tests for the max-concurrency (maximum antichain) collapse threshold
-
--- | 5 independent jobs can all run at once (concurrency 5), so a limit of 4
--- collapses.
-testMaxConcurrencyCollapses :: IO ()
-testMaxConcurrencyCollapses = do
-  batches <- runWith (\c -> c { configMaxConcurrency = Just 4 }) independentJobsFile
-  assertBool "should collapse when more jobs could run at once than the limit" (isCollapsed batches)
-
--- | At the limit (concurrency 5, limit 5) the pipeline is not collapsed.
-testMaxConcurrencyAtLimit :: IO ()
-testMaxConcurrencyAtLimit = do
-  batches <- runWith (\c -> c { configMaxConcurrency = Just 5 }) independentJobsFile
-  assertBool "should not collapse at the limit" (not (isCollapsed batches))
-  assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
-
--- | dependent-jobs has 5 jobs but at most 3 can run concurrently (its maximum
--- antichain, e.g. jobC, jobD, jobE), so a limit of 3 does NOT collapse even
--- though there are 5 jobs, while a limit of 2 does. This pins that we trigger
--- on the antichain, not the raw job count.
-testMaxConcurrencyAntichain :: IO ()
-testMaxConcurrencyAntichain = do
-  atLimit <- runWith (\c -> c { configMaxConcurrency = Just 3 }) dependentJobsFile
-  assertBool "concurrency 3 should not collapse at limit 3" (not (isCollapsed atLimit))
-  assertEqual "should keep all 5 steps" 5 (length (getAllSteps atLimit))
-  below <- runWith (\c -> c { configMaxConcurrency = Just 2 }) dependentJobsFile
-  assertBool "concurrency 3 should collapse at limit 2" (isCollapsed below)

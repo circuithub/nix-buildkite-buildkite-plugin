@@ -83,12 +83,11 @@ trusted users can run post-build hooks.
 
 ## Limiting the size of the pipeline
 
-Very large or very wide pipelines can be unwieldy: they clutter the Buildkite
-UI, add per-step scheduling overhead, and a wide pipeline can demand more
-Buildkite agents at once than you have, starving everything else. Two optional
-thresholds let you cap this. If *either* is exceeded, `nix-buildkite` collapses
-the whole pipeline into a **single job that builds everything** instead of one
-job per build:
+Very large pipelines can be unwieldy: they clutter the Buildkite UI, add
+per-step scheduling overhead, and can demand more Buildkite agents at once than
+you have, starving everything else. The optional `max-steps` threshold lets you
+cap this. If it is exceeded, `nix-buildkite` collapses the whole pipeline into a
+**single job that builds everything** instead of one job per build:
 
 ``` yaml
 steps:
@@ -99,20 +98,17 @@ steps:
         file: jobs.nix
         # Collapse if we'd produce more than this many steps.
         max-steps: 400
-        # Collapse if more than this many jobs could ever run concurrently
-        # (i.e. the peak number of agents the pipeline could occupy at once).
-        max-concurrency: 20
 ```
 
-Both are off by default. `max-steps` bounds the total number of jobs;
-`max-concurrency` bounds *peak parallelism* — because steps take varying amounts
-of time, in the worst case any set of mutually-independent jobs can be running
-simultaneously, so the largest such set (the dependency graph's maximum
-antichain) is the most agents the pipeline can use at once.
+It is off by default. A generous value is usually best: the point is to guard
+against pathologically large pipelines, not to keep the count low. You can also
+override it for a single build without editing the pipeline config by setting
+the `BUILDKITE_PLUGIN_NIX_BUILDKITE_MAX_STEPS` environment variable at the build
+level (just remember to unset it afterwards).
 
 The collapsed job builds every derivation in one `nix-store --keep-going`
-invocation, so a failure anywhere doesn't abort the rest, and it goes red (and
-posts a Buildkite annotation listing what couldn't be built) if anything failed.
+invocation, so a failure anywhere doesn't abort the rest, and it goes red if
+anything failed.
 
 ### Recovering granular failure information
 
@@ -130,7 +126,7 @@ uploads to your binary cache):
 With these set, the collapsed job uploads every derivation that *succeeds* to
 the cache as it goes. On a re-run, `nix-build --dry-run` then reports only the
 failures and their blocked dependents — a much smaller set that typically drops
-back under your thresholds, so the re-run produces granular per-job steps for
+back under your threshold, so the re-run produces granular per-job steps for
 exactly the things that still need building, at the cost of one re-evaluation.
 
 ## Sit Back and Enjoy!

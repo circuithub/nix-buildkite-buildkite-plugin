@@ -14,8 +14,6 @@ configuration:
       type: integer
     max-steps:
       type: integer
-    max-concurrency:
-      type: integer
   required:
     - file
   not:
@@ -24,5 +22,4 @@ configuration:
       - skip-already-built
       - batch-size
       - max-steps
-      - max-concurrency
   additionalProperties: false
