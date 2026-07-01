@@ -3,6 +3,7 @@
 {-# language NamedFieldPuns #-}
 {-# language OverloadedStrings #-}
 {-# language NumericUnderscores #-}
+{-# language TemplateHaskell #-}
 
 module NixBuildkite
   ( -- * Configuration
@@ -30,7 +31,7 @@ import Data.Char ( isAlphaNum )
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Foldable ( toList )
 import Data.Traversable ( for )
-import Data.List ( partition )
+import Data.List ( partition, intercalate )
 import qualified Data.List
 import qualified Prelude
 import Prelude hiding ( readFile )
@@ -55,6 +56,10 @@ import Nix.Derivation ( Derivation(..), parseDerivation )
 
 -- process
 import System.Process hiding (env)
+
+-- template-haskell
+import Language.Haskell.TH ( litE, stringL, runIO )
+import Language.Haskell.TH.Syntax ( addDependentFile )
 
 -- text
 import Data.Text ( Text, pack, unpack )
@@ -251,11 +256,30 @@ not abort the rest, and (when a post-build hook is configured) each derivation
 that succeeds is uploaded to the cache as it completes. @nix-store --keep-going@
 exits non-zero if anything failed, so the big job goes red.
 
+The shell logic for that job lives in @scripts/build-all.sh@ (embedded as
+'buildAllScript'); 'bigStepCommand' just prepends the derivation paths as
+arguments. That script also tidies up nix's noisy failure output — see its
+header comment.
+
 This enables a recovery workflow: re-run the pipeline with skip-already-built
 enabled. @nix-build --dry-run@ then reports only the failures and their blocked
 dependents, which is a much smaller set that typically drops back under the
 limit — so the re-run yields granular per-job steps showing exactly what failed,
 at the cost of one re-evaluation. -}
+
+-- | The @build-all.sh@ script, embedded at compile time. Keeping it as a real
+-- script file — rather than a string assembled in Haskell — means it can be
+-- read, shellchecked and edited as ordinary bash. It takes the derivations to
+-- build as positional arguments and reads @NBK_POST_BUILD_HOOK@ from the
+-- environment; 'bigStepCommand' supplies both.
+--
+-- 'addDependentFile' makes GHC recompile this module when the script changes.
+buildAllScript :: Text
+buildAllScript = pack $(do
+    let scriptPath = "scripts/build-all.sh"
+    addDependentFile scriptPath
+    contents <- runIO (Prelude.readFile scriptPath)
+    litE (stringL contents))
 
 -- | Build the single "build everything" step used when a pipeline is collapsed.
 -- @reason@ is a human-readable explanation of why we collapsed, shown in the
@@ -264,35 +288,39 @@ bigStep :: Config -> String -> [(Text, FilePath)] -> Value
 bigStep config reason jobs =
   object
     [ "label"   .= ("Build everything (" ++ reason ++ ")")
-    , "command" .= bigStepCommand (postBuildHookArgs config) jobs
+    , "command" .= bigStepCommand (configPostBuildHook config) jobs
     , "key"     .= ("nix-buildkite-build-all" :: String)
     ]
 
--- | The shell script run by 'bigStep'. It realises every job's derivation in a
--- single @nix-store --keep-going@ invocation. The drv paths are emitted into a
--- bash array so we avoid line-continuation escaping.
+-- | The command for the collapsed step: a small prelude passing the job
+-- derivations to 'buildAllScript' as positional arguments (and the post-build
+-- hook, if any, via an environment variable), followed by the script itself.
 --
 -- Drv store paths are shell-safe (alphanumerics plus @/-._@) so they are
--- emitted bare. Note: the single @nix-store@ invocation is bounded by @ARG_MAX@
--- (~2MB, i.e. tens of thousands of drvs) — fine for realistic pipelines, and a
--- small max-steps keeps the job set well under that.
-bigStepCommand :: [String] -> [(Text, FilePath)] -> Value
-bigStepCommand postBuildHook jobs = String (pack script)
+-- emitted bare. Note: 'buildAllScript' realises them in a single @nix-store@
+-- invocation, which is bounded by @ARG_MAX@ (~2MB, i.e. tens of thousands of
+-- drvs) — fine for realistic pipelines, and a small max-steps keeps the job set
+-- well under that.
+bigStepCommand :: Maybe FilePath -> [(Text, FilePath)] -> Value
+bigStepCommand postBuildHook jobs = String (pack prelude <> buildAllScript)
   where
     drvPaths = map snd jobs
 
-    drvArray =
-      unlines $ [ "drvs=(" ] ++ map (\p -> "  " ++ p) drvPaths ++ [ ")" ]
+    hookLine = case postBuildHook of
+      Nothing   -> ""
+      Just path -> "export NBK_POST_BUILD_HOOK=" ++ shellSingleQuote path ++ "\n"
 
-    buildCmd =
-      unwords $ [ "nix-store" ] <> postBuildHook <> [ "--keep-going", "-r", "\"${drvs[@]}\"" ]
+    -- Pass the derivations as positional arguments, one per line for legibility.
+    setArgs = "set -- " ++ intercalate " \\\n  " drvPaths ++ "\n"
 
-    script = unlines
-      [ "set -euo pipefail"
-      , ""
-      , drvArray
-      , buildCmd
-      ]
+    prelude = hookLine ++ setArgs
+
+-- | Single-quote a string for safe inclusion in a shell command.
+shellSingleQuote :: String -> String
+shellSingleQuote s = "'" ++ concatMap escape s ++ "'"
+  where
+    escape '\'' = "'\\''"
+    escape c    = [c]
 
 -- | Convert a derivation path to a valid Buildkite step key.
 -- Buildkite step keys are limited to 100 characters and may only contain

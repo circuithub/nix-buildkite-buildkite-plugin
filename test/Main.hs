@@ -222,6 +222,7 @@ testMaxStepsCollapses = do
       assertEqual "collapsed step key" (Just buildAllKey) (getKey step)
       let cmd = getCommand step
       assertBool "builds with --keep-going" ("--keep-going" `T.isInfixOf` cmd)
+      assertBool "surfaces root failures on error" ("Some builds failed" `T.isInfixOf` cmd)
       assertBool "references every job" $
         all (`T.isInfixOf` cmd) ["job1", "job2", "job3", "job4", "job5"]
       assertEqual "has no dependencies" [] (getDependsOn step)
