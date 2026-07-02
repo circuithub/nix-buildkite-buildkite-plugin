@@ -12,6 +12,8 @@ configuration:
       type: string
     batch-size:
       type: integer
+    max-steps:
+      type: integer
   required:
     - file
   not:
@@ -19,4 +21,5 @@ configuration:
       - post-build-hook
       - skip-already-built
       - batch-size
+      - max-steps
   additionalProperties: false
