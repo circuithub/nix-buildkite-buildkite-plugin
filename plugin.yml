@@ -14,6 +14,8 @@ configuration:
       type: integer
     max-steps:
       type: integer
+    gc-root:
+      type: string
   required:
     - file
   not:
@@ -22,4 +24,5 @@ configuration:
       - skip-already-built
       - batch-size
       - max-steps
+      - gc-root
   additionalProperties: false

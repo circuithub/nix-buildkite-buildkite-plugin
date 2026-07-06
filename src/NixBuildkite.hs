@@ -48,6 +48,9 @@ import Data.Containers.ListUtils ( nubOrd )
 import qualified Data.Map as Map
 import qualified Data.Set as S
 
+-- directory
+import System.Directory (pathIsSymbolicLink, getSymbolicLinkTarget)
+
 -- filepath
 import System.FilePath ( takeFileName, takeBaseName )
 
@@ -78,6 +81,8 @@ data Config = Config
     -- ^ If set, and the pipeline would produce more than this many steps,
     -- collapse the whole pipeline into a single job that builds everything
     -- (see 'generatePipelineFromDrvPaths'). 'Nothing' means no limit.
+  , configGcRoot :: Maybe FilePath
+    -- ^ When specified create a gc root for all instantiated derivations in a subdirectory of this path.
   } deriving (Show, Eq)
 
 -- | Default configuration with sensible defaults.
@@ -87,6 +92,7 @@ defaultConfig = Config
   , configSkipAlreadyBuilt = False
   , configBatchSize = 450
   , configMaxSteps = Nothing
+  , configGcRoot = Nothing
   }
 
 -- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
@@ -102,14 +108,19 @@ generatePipeline :: Config -> FilePath -> IO [[Value]]
 generatePipeline config jobsExpr = do
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
   -- things that may need to be built.
-  inputDrvPaths <- nubOrd . map removeBang <$> nixInstantiate jobsExpr
+  inputDrvPathsWithLinks <- nubOrd . map removeBang <$> nixInstantiate config jobsExpr
+
+  -- When we create gc-roots, then nix-instantiate will return the new gc-root paths,
+  -- rather than the store paths, so let's resolve symlinks to get the store paths.
+  -- This will be a no-op otherwise.
+  inputDrvPaths <- traverse (\p -> pathIsSymbolicLink p >>= \b -> if b then getSymbolicLinkTarget p else pure p) inputDrvPathsWithLinks
 
   -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
   pathsToBuild <- if configSkipAlreadyBuilt config
     then nixBuildDryRun inputDrvPaths
     else pure inputDrvPaths
 
-  -- Filter our inputDrvs down to just those that will be built (if the skip already built flag is set)
+  -- Filter our inputDrvs down to just those that will be built (if the "skip already built" flag is set)
   let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
 
   generatePipelineFromDrvPaths config inputDrvPathsToBuild
@@ -347,8 +358,12 @@ withTime label k = do
   where
     click = getTime Monotonic
 
-nixInstantiate :: String -> IO [String]
-nixInstantiate jobsExpr = withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" [ jobsExpr ] "")
+nixInstantiate :: Config -> String -> IO [String]
+nixInstantiate config jobsExpr = do
+  let gcRootArg = case configGcRoot config of
+        Nothing -> []
+        Just path -> ["--add-root", path]
+  withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (gcRootArg ++ [ jobsExpr ]) "")
 
 nixBuildDryRun :: [String] -> IO [String]
 nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
