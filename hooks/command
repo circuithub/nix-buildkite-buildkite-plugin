@@ -33,7 +33,7 @@ echo "--- :pipeline: Uploading pipeline"
 # Pipeline output is one JSON object per line (batches for large pipelines)
 BATCH_NUM=0
 TOTAL_BATCHES=$(echo "$PIPELINE" | wc -l)
-echo "$PIPELINE" | while IFS= read -r batch; do
+echo -n "$PIPELINE" | while IFS= read -r batch; do
     BATCH_NUM=$((BATCH_NUM + 1))
     if [[ "$TOTAL_BATCHES" -gt 1 ]]; then
         echo "Uploading batch $BATCH_NUM of $TOTAL_BATCHES"
