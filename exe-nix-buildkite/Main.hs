@@ -29,6 +29,8 @@ main = do
     pure $ case e of
       Nothing -> configBatchSize defaultConfig
       Just s -> fromMaybe (error "BATCH_SIZE must be a positive integer") (readMaybe s)
+      
+  gcRoot <- lookupEnv "GC_ROOT"
 
   -- If set, collapse to a single "build everything" job once the pipeline would
   -- exceed this many steps. Unset means no limit.
@@ -43,6 +45,7 @@ main = do
         , configSkipAlreadyBuilt = skipAlreadyBuilt
         , configBatchSize = batchSize
         , configMaxSteps = maxSteps
+        , configGcRoot = gcRoot
         }
 
   batches <- generatePipeline config jobsExpr

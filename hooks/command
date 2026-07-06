@@ -20,6 +20,10 @@ if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_MAX_STEPS:-}" ]]; then
     export MAX_STEPS="$BUILDKITE_PLUGIN_NIX_BUILDKITE_MAX_STEPS"
 fi
 
+if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_GC_ROOT:-}" ]]; then
+    export GC_ROOT="$BUILDKITE_PLUGIN_NIX_BUILDKITE_GC_ROOT"
+fi
+
 echo "--- :nixos: Running nix-buildkite"
 nix-build -E "(import $DIR/../jobs.nix).nix-buildkite" -o nix-buildkite
 PIPELINE=$( ./nix-buildkite/bin/nix-buildkite "$NIX_FILE" )
