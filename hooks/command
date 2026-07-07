@@ -33,14 +33,19 @@ echo "--- :pipeline: Uploading pipeline"
 # Pipeline output is one JSON object per line (batches for large pipelines)
 BATCH_NUM=0
 TOTAL_BATCHES=$(echo "$PIPELINE" | wc -l)
-echo -n "$PIPELINE" | while IFS= read -r batch; do
-    BATCH_NUM=$((BATCH_NUM + 1))
-    if [[ "$TOTAL_BATCHES" -gt 1 ]]; then
-        echo "Uploading batch $BATCH_NUM of $TOTAL_BATCHES"
-    fi
-    # --no-interpolation: the steps are fully resolved by nix-buildkite (concrete
-    # store paths, sanitized keys), so there is nothing for Buildkite to
-    # interpolate. Leaving it on would try to expand shell syntax like the
-    # collapsed job's ${drvs[@]} array and fail the upload.
-    echo "$batch" | buildkite-agent pipeline upload --no-interpolation
-done
+
+if [ -z "$PIPELINE" ]; then
+    echo "No jobs"
+else
+    echo "$PIPELINE" | while IFS= read -r batch; do
+        BATCH_NUM=$((BATCH_NUM + 1))
+        if [[ "$TOTAL_BATCHES" -gt 1 ]]; then
+            echo "Uploading batch $BATCH_NUM of $TOTAL_BATCHES"
+        fi
+        # --no-interpolation: the steps are fully resolved by nix-buildkite (concrete
+        # store paths, sanitized keys), so there is nothing for Buildkite to
+        # interpolate. Leaving it on would try to expand shell syntax like the
+        # collapsed job's ${drvs[@]} array and fail the upload.
+        echo "$batch" | buildkite-agent pipeline upload --no-interpolation
+    done
+fi
