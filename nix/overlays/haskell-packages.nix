@@ -32,8 +32,6 @@ in
               composeExtensions
                 (old.overrides or (_: _: {}))
                 (
-                  composeExtensions
-                    (packagesFromDirectory { directory = ./haskell-packages; })
                     configurations
                 );
           }
