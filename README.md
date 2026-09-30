@@ -131,6 +131,17 @@ your threshold, so the re-run produces granular per-job steps for exactly what
 still needs building, at the cost of one re-evaluation. Failures near the *root*
 leave most of the graph unbuilt, so the re-run may just collapse again.
 
+### Copying to a remote store
+
+It is often helpful to be able to upload your derivation files another nix store, for instance, a remote builder or an S3 cache.
+You can do this like so:
+
+``` yaml
+  copy-remote: ssh-ng://my-remote-builder
+```
+
+`
+
 ## Sit Back and Enjoy!
 
 That's it! Following these steps should give you a working pipeline that builds
