@@ -29,7 +29,7 @@ import Data.Attoparsec.Text ( parseOnly )
 -- base
 import Data.Char ( isAlphaNum )
 import Data.Maybe ( fromMaybe, mapMaybe )
-import Data.Foldable ( toList )
+import Data.Foldable ( toList, for_ )
 import Data.Traversable ( for )
 import Data.List ( partition, intercalate )
 import qualified Data.List
@@ -83,6 +83,9 @@ data Config = Config
     -- (see 'generatePipelineFromDrvPaths'). 'Nothing' means no limit.
   , configGcRoot :: Maybe FilePath
     -- ^ When specified create a gc root for all instantiated derivations in a subdirectory of this path.
+  , configCopyRemote :: Maybe String
+    -- ^ A nix remote that we should copy the derivations to.
+    -- This is helpful if the build realisers are not running on the same machine as the instantiator.
   } deriving (Show, Eq)
 
 -- | Default configuration with sensible defaults.
@@ -93,6 +96,7 @@ defaultConfig = Config
   , configBatchSize = 450
   , configMaxSteps = Nothing
   , configGcRoot = Nothing
+  , configCopyRemote = Nothing
   }
 
 -- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
@@ -123,7 +127,10 @@ generatePipeline config jobsExpr = do
   -- Filter our inputDrvs down to just those that will be built (if the "skip already built" flag is set)
   let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
 
+  for_ (configCopyRemote config) $ copyToRemote pathsToBuild
+
   generatePipelineFromDrvPaths config inputDrvPathsToBuild
+
 
 -- | Generate pipeline batches from a list of derivation paths.
 -- This is the core logic, useful for testing without needing nix-instantiate.
@@ -365,6 +372,13 @@ nixInstantiate config jobsExpr = do
         Just path -> ["--add-root", path]
   withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (gcRootArg ++ [ jobsExpr ]) "")
 
+copyToRemote :: [FilePath] -> String ->  IO ()
+copyToRemote [] _ = 
+  putStrLn "No derivations to copy"
+copyToRemote pathsToCopy remote = do
+  withTime "nix copy" $
+    callProcess "nix" (["copy", "--to", remote] ++ pathsToCopy)
+  
 nixBuildDryRun :: [String] -> IO [String]
 nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
   withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
