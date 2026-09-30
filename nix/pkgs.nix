@@ -1,7 +1,7 @@
 import (builtins.fetchTarball {
-  name = "nixos-20.03";
-  url = "https://github.com/nixos/nixpkgs/archive/0d0660fde3bb53a3d013b65e5e141eb11d1efb82.tar.gz";
-  sha256 = "13qpa916qq1kqvfj8q4zkmnfnbh2kpx0nxxg04nblai0smz97820";
+  name = "nixos-26.05";
+  url = "https://github.com/nixos/nixpkgs/archive/7fc6f2c20af09cdcaf48b92ec3121860139ec668.tar.gz";
+  sha256 = "sha256-bNyvoIyOCu7lzoCpWKWGIsHpTtERUWzqYWFPlN++WTw=";
 }) {
   overlays = import ./overlays.nix;
 }
