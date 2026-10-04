@@ -1,113 +1,127 @@
-{-# language BlockArguments #-}
-{-# language LambdaCase #-}
-{-# language NamedFieldPuns #-}
-{-# language OverloadedStrings #-}
-{-# language NumericUnderscores #-}
-{-# language TemplateHaskell #-}
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
-module NixBuildkite
-  ( -- * Configuration
-    Config(..)
-  , defaultConfig
-    -- * Pipeline generation
-  , generatePipeline
-    -- * Utilities (exported for testing)
-  , chunksOf
-  , stepify
-  ) where
+module NixBuildkite (
+  -- * Configuration
+  Config (..),
+  defaultConfig,
 
--- algebraic-graphs
-import Algebra.Graph.AdjacencyMap ( AdjacencyMap, edge, empty, hasVertex, overlay, overlays, postSet, preSet, vertices, vertexSet )
-import qualified Algebra.Graph.AdjacencyMap.Algorithm as AMA
+  -- * Pipeline generation
+  generatePipeline,
+
+  -- * Utilities (exported for testing)
+  chunksOf,
+  stepify,
+) where
+
+-- nix-derivation
+import Nix.Derivation (Derivation (..), parseDerivation)
 
 -- aeson
-import Data.Aeson ( Value(..), (.=), object )
+import Data.Aeson (Value (..), object, (.=))
+
+-- algebraic-graphs
+import Algebra.Graph.AdjacencyMap (AdjacencyMap, edge, empty, hasVertex, overlay, overlays, postSet, preSet, vertexSet, vertices)
+import qualified Algebra.Graph.AdjacencyMap.Algorithm as AMA
 
 -- attoparsec
-import Data.Attoparsec.Text ( parseOnly )
+import Data.Attoparsec.Text (parseOnly)
 
 -- base
-import Data.Char ( isAlphaNum )
-import Data.Maybe ( fromMaybe, mapMaybe )
-import Data.Foldable ( toList, for_ )
-import Data.Traversable ( for )
-import Data.List ( partition, intercalate )
+import Data.Char (isAlphaNum)
+import Data.Foldable (for_, toList)
+import Data.List (intercalate, partition)
 import qualified Data.List
-import qualified Prelude
-import Prelude hiding ( readFile )
-import System.IO ( hPutStrLn, hGetContents, stderr )
-import Text.Printf ( printf )
 import qualified Data.List as List
-import System.Exit ( ExitCode(..) )
+import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Traversable (for)
+import Prelude hiding (readFile)
+import qualified Prelude
+import System.Exit (ExitCode (..))
+import System.IO (hGetContents, hPutStrLn, stderr)
+import Text.Printf (printf)
 
 -- clock
 import System.Clock
 
 -- containers
-import Data.Containers.ListUtils ( nubOrd )
+import Data.Containers.ListUtils (nubOrd)
 import qualified Data.Map as Map
 import qualified Data.Set as S
 
 -- directory
-import System.Directory (pathIsSymbolicLink, getSymbolicLinkTarget)
+import System.Directory (getSymbolicLinkTarget, pathIsSymbolicLink)
 
 -- filepath
-import System.FilePath ( takeFileName, takeBaseName )
-
--- nix-derivation
-import Nix.Derivation ( Derivation(..), parseDerivation )
+import System.FilePath (takeBaseName, takeFileName)
 
 -- process
 import System.Process hiding (env)
 
 -- template-haskell
-import Language.Haskell.TH ( litE, stringL, runIO )
-import Language.Haskell.TH.Syntax ( addDependentFile )
+import Language.Haskell.TH (litE, runIO, stringL)
+import Language.Haskell.TH.Syntax (addDependentFile)
 
 -- text
-import Data.Text ( Text, pack, unpack )
-import Data.Text.IO ( readFile )
+import Data.Text (Text, pack, unpack)
+import Data.Text.IO (readFile)
 
 
 -- | Configuration for pipeline generation.
 data Config = Config
   { configPostBuildHook :: Maybe FilePath
-    -- ^ Optional path to a post-build hook script.
+  -- ^ Optional path to a post-build hook script.
   , configSkipAlreadyBuilt :: Bool
-    -- ^ If True, skip derivations that are already built.
+  -- ^ If True, skip derivations that are already built.
+  , configSkipCheckout :: Bool
+  -- ^ Skip checkout in generated jobs. Their commands and hooks must work without the repository.
   , configBatchSize :: Int
-    -- ^ Maximum number of steps per batch (Buildkite limit is 500).
+  -- ^ Maximum number of steps per batch (Buildkite limit is 500).
   , configMaxSteps :: Maybe Int
-    -- ^ If set, and the pipeline would produce more than this many steps,
-    -- collapse the whole pipeline into a single job that builds everything
-    -- (see 'generatePipelineFromDrvPaths'). 'Nothing' means no limit.
+  {- ^ If set, and the pipeline would produce more than this many steps,
+  collapse the whole pipeline into a single job that builds everything
+  (see 'generatePipelineFromDrvPaths'). 'Nothing' means no limit.
+  -}
   , configGcRoot :: Maybe FilePath
-    -- ^ When specified create a gc root for all instantiated derivations in a subdirectory of this path.
+  -- ^ When specified create a gc root for all instantiated derivations in a subdirectory of this path.
   , configCopyRemote :: Maybe String
-    -- ^ A nix remote that we should copy the derivations to.
-    -- This is helpful if the build realisers are not running on the same machine as the instantiator.
-  } deriving (Show, Eq)
+  {- ^ A nix remote that we should copy the derivations to.
+  This is helpful if the build realisers are not running on the same machine as the instantiator.
+  -}
+  }
+  deriving (Show, Eq)
+
 
 -- | Default configuration with sensible defaults.
 defaultConfig :: Config
-defaultConfig = Config
-  { configPostBuildHook = Nothing
-  , configSkipAlreadyBuilt = False
-  , configBatchSize = 450
-  , configMaxSteps = Nothing
-  , configGcRoot = Nothing
-  , configCopyRemote = Nothing
-  }
+defaultConfig =
+  Config
+    { configPostBuildHook = Nothing
+    , configSkipAlreadyBuilt = False
+    , configSkipCheckout = False
+    , configBatchSize = 450
+    , configMaxSteps = Nothing
+    , configGcRoot = Nothing
+    , configCopyRemote = Nothing
+    }
 
--- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
--- This is the syntax for showing that we are talking about a particular output.
--- We do not want this in our drvs since we want to open the file and there is no such file when the
--- bang is included.
+
+{- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
+This is the syntax for showing that we are talking about a particular output.
+We do not want this in our drvs since we want to open the file and there is no such file when the
+bang is included.
+-}
 removeBang :: String -> String
-removeBang str = Data.List.takeWhile (/='!') str
+removeBang str = Data.List.takeWhile (/= '!') str
 
--- | Generate pipeline batches from a jobs.nix file.
--- Returns a list of batches, where each batch is a list of Buildkite step values.
+
+{- | Generate pipeline batches from a jobs.nix file.
+Returns a list of batches, where each batch is a list of Buildkite step values.
+-}
 generatePipeline :: Config -> FilePath -> IO [[Value]]
 generatePipeline config jobsExpr = do
   -- Run nix-instantiate on the jobs expression to instantiate .drvs for all
@@ -120,9 +134,10 @@ generatePipeline config jobsExpr = do
   inputDrvPaths <- traverse (\p -> pathIsSymbolicLink p >>= \b -> if b then getSymbolicLinkTarget p else pure p) inputDrvPathsWithLinks
 
   -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
-  pathsToBuild <- if configSkipAlreadyBuilt config
-    then nixBuildDryRun inputDrvPaths
-    else pure inputDrvPaths
+  pathsToBuild <-
+    if configSkipAlreadyBuilt config
+      then nixBuildDryRun inputDrvPaths
+      else pure inputDrvPaths
 
   -- Filter our inputDrvs down to just those that will be built (if the "skip already built" flag is set)
   let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
@@ -132,8 +147,9 @@ generatePipeline config jobsExpr = do
   generatePipelineFromDrvPaths config inputDrvPathsToBuild
 
 
--- | Generate pipeline batches from a list of derivation paths.
--- This is the core logic, useful for testing without needing nix-instantiate.
+{- | Generate pipeline batches from a list of derivation paths.
+This is the core logic, useful for testing without needing nix-instantiate.
+-}
 generatePipelineFromDrvPaths :: Config -> [FilePath] -> IO [[Value]]
 generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
   let postBuildHook = postBuildHookArgs config
@@ -146,14 +162,12 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
         -- We couldn't parse the derivation to get a name, so we'll just use the
         -- derivation name.
         return (pack (takeFileName drvPath), drvPath)
-
       Right drv ->
         case Map.lookup "name" (env drv) of
           Nothing ->
             -- There was no 'name' environment variable, so we'll just use the
             -- derivation name.
             return (pack (takeFileName drvPath), drvPath)
-
           Just name ->
             return (name, drvPath)
 
@@ -191,20 +205,22 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
   -- This terminates if we don't have cycles.
   let depsOf v = fromMaybe S.empty $ Map.lookup v depsMap
         where
-          depsMap = Map.fromList
-            [(v', us) |
-              v' <- S.toList (vertexSet g),
-              let nexts = S.toList $ postSet v' g,
-              let (ins, outs) = partition (`S.member` jobSet) nexts,
-              let us = S.unions $ S.fromList ins : map depsOf outs
-            ]
+          depsMap =
+            Map.fromList
+              [ (v', us)
+              | v' <- S.toList (vertexSet g)
+              , let nexts = S.toList $ postSet v' g
+              , let (ins, outs) = partition (`S.member` jobSet) nexts
+              , let us = S.unions $ S.fromList ins : map depsOf outs
+              ]
 
   let jobGraph :: AdjacencyMap FilePath
-      jobGraph = overlay (vertices $ S.toList jobSet) $
-        overlays
-          [ overlays [edge dep job | dep <- S.toList (depsOf job)]  -- edge from dependency to dependent
-          | job <- S.toList jobSet
-          ]
+      jobGraph =
+        overlay (vertices $ S.toList jobSet) $
+          overlays
+            [ overlays [edge dep job | dep <- S.toList (depsOf job)] -- edge from dependency to dependent
+            | job <- S.toList jobSet
+            ]
 
   -- Topological sort: dependencies come before dependents.
   -- For edge (A -> B), topSort returns A before B. Our edges go from dependency to dependent,
@@ -223,12 +239,15 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
 
   let step :: Text -> FilePath -> Value
       step label drvPath =
-        object
+        object $
           [ "label" .= unpack label
-          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
+          , "command" .= String (pack $ unwords $ ["nix-store"] <> postBuildHook <> ["-r", drvPath])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
           ]
+            <> [ "env" .= object ["BUILDKITE_SKIP_CHECKOUT" .= ("true" :: Text)]
+               | configSkipCheckout config
+               ]
         where
           dependencies = map stepify $ S.toList $ preSet drvPath jobGraph
 
@@ -240,17 +259,16 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
   let collapseReason :: Maybe String
       collapseReason
         | Just maxSteps <- configMaxSteps config
-        , numSteps > maxSteps
-        = Just $ printf "%d steps exceeds the max-steps limit of %d" numSteps maxSteps
-
-        | otherwise
-        = Nothing
+        , numSteps > maxSteps =
+            Just $ printf "%d steps exceeds the max-steps limit of %d" numSteps maxSteps
+        | otherwise =
+            Nothing
 
   case collapseReason of
     -- Collapsed: a single job (its own single batch) that builds everything.
-    Just reason -> return [ [ bigStep config reason sortedDrvs ] ]
+    Just reason -> return [[bigStep config reason sortedDrvs]]
     -- Normal: one step per job, split into batches.
-    Nothing     -> return $ chunksOf (configBatchSize config) steps
+    Nothing -> return $ chunksOf (configBatchSize config) steps
 
 
 -- | Split a list into chunks of at most n elements.
@@ -258,12 +276,15 @@ chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
 chunksOf n xs = take n xs : chunksOf n (drop n xs)
 
--- | The extra @nix-store@ arguments needed to run the configured post-build
--- hook, or @[]@ if none is configured.
+
+{- | The extra @nix-store@ arguments needed to run the configured post-build
+hook, or @[]@ if none is configured.
+-}
 postBuildHookArgs :: Config -> [String]
 postBuildHookArgs config = case configPostBuildHook config of
-  Nothing   -> []
-  Just path -> [ "--post-build-hook", path ]
+  Nothing -> []
+  Just path -> ["--post-build-hook", path]
+
 
 {- Note [Collapsing large pipelines]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -285,47 +306,58 @@ dependents, which is a much smaller set that typically drops back under the
 limit — so the re-run yields granular per-job steps showing exactly what failed,
 at the cost of one re-evaluation. -}
 
--- | The @build-all.sh@ script, embedded at compile time. Keeping it as a real
--- script file — rather than a string assembled in Haskell — means it can be
--- read, shellchecked and edited as ordinary bash. It takes the derivations to
--- build as positional arguments and reads @NBK_POST_BUILD_HOOK@ from the
--- environment; 'bigStepCommand' supplies both.
---
--- 'addDependentFile' makes GHC recompile this module when the script changes.
-buildAllScript :: Text
-buildAllScript = pack $(do
-    let scriptPath = "scripts/build-all.sh"
-    addDependentFile scriptPath
-    contents <- runIO (Prelude.readFile scriptPath)
-    litE (stringL contents))
+{- | The @build-all.sh@ script, embedded at compile time. Keeping it as a real
+script file — rather than a string assembled in Haskell — means it can be
+read, shellchecked and edited as ordinary bash. It takes the derivations to
+build as positional arguments and reads @NBK_POST_BUILD_HOOK@ from the
+environment; 'bigStepCommand' supplies both.
 
--- | Build the single "build everything" step used when a pipeline is collapsed.
--- @reason@ is a human-readable explanation of why we collapsed, shown in the
--- step label. The step has no @depends_on@: it is the only step.
+'addDependentFile' makes GHC recompile this module when the script changes.
+-}
+buildAllScript :: Text
+buildAllScript =
+  pack
+    $( do
+         let scriptPath = "scripts/build-all.sh"
+         addDependentFile scriptPath
+         contents <- runIO (Prelude.readFile scriptPath)
+         litE (stringL contents)
+     )
+
+
+{- | Build the single "build everything" step used when a pipeline is collapsed.
+@reason@ is a human-readable explanation of why we collapsed, shown in the
+step label. The step has no @depends_on@: it is the only step.
+-}
 bigStep :: Config -> String -> [(Text, FilePath)] -> Value
 bigStep config reason jobs =
-  object
-    [ "label"   .= ("Build everything (" ++ reason ++ ")")
+  object $
+    [ "label" .= ("Build everything (" ++ reason ++ ")")
     , "command" .= bigStepCommand (configPostBuildHook config) jobs
-    , "key"     .= ("nix-buildkite-build-all" :: String)
+    , "key" .= ("nix-buildkite-build-all" :: String)
     ]
+      <> [ "env" .= object ["BUILDKITE_SKIP_CHECKOUT" .= ("true" :: Text)]
+         | configSkipCheckout config
+         ]
 
--- | The command for the collapsed step: a small prelude passing the job
--- derivations to 'buildAllScript' as positional arguments (and the post-build
--- hook, if any, via an environment variable), followed by the script itself.
---
--- Drv store paths are shell-safe (alphanumerics plus @/-._@) so they are
--- emitted bare. Note: 'buildAllScript' realises them in a single @nix-store@
--- invocation, which is bounded by @ARG_MAX@ (~2MB, i.e. tens of thousands of
--- drvs) — fine for realistic pipelines, and a small max-steps keeps the job set
--- well under that.
+
+{- | The command for the collapsed step: a small prelude passing the job
+derivations to 'buildAllScript' as positional arguments (and the post-build
+hook, if any, via an environment variable), followed by the script itself.
+
+Drv store paths are shell-safe (alphanumerics plus @/-._@) so they are
+emitted bare. Note: 'buildAllScript' realises them in a single @nix-store@
+invocation, which is bounded by @ARG_MAX@ (~2MB, i.e. tens of thousands of
+drvs) — fine for realistic pipelines, and a small max-steps keeps the job set
+well under that.
+-}
 bigStepCommand :: Maybe FilePath -> [(Text, FilePath)] -> Value
 bigStepCommand postBuildHook jobs = String (pack prelude <> buildAllScript)
   where
     drvPaths = map snd jobs
 
     hookLine = case postBuildHook of
-      Nothing   -> ""
+      Nothing -> ""
       Just path -> "export NBK_POST_BUILD_HOOK=" ++ shellSingleQuote path ++ "\n"
 
     -- Pass the derivations as positional arguments, one per line for legibility.
@@ -333,16 +365,19 @@ bigStepCommand postBuildHook jobs = String (pack prelude <> buildAllScript)
 
     prelude = hookLine ++ setArgs
 
+
 -- | Single-quote a string for safe inclusion in a shell command.
 shellSingleQuote :: String -> String
 shellSingleQuote s = "'" ++ concatMap escape s ++ "'"
   where
     escape '\'' = "'\\''"
-    escape c    = [c]
+    escape c = [c]
 
--- | Convert a derivation path to a valid Buildkite step key.
--- Buildkite step keys are limited to 100 characters and may only contain
--- alphanumeric characters, '/', and '-'.
+
+{- | Convert a derivation path to a valid Buildkite step key.
+Buildkite step keys are limited to 100 characters and may only contain
+alphanumeric characters, '/', and '-'.
+-}
 stepify :: String -> String
 stepify = take 99 . map replace . takeBaseName
   where
@@ -365,28 +400,32 @@ withTime label k = do
   where
     click = getTime Monotonic
 
+
 nixInstantiate :: Config -> String -> IO [String]
 nixInstantiate config jobsExpr = do
   let gcRootArg = case configGcRoot config of
         Nothing -> []
         Just path -> ["--add-root", path]
-  withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (gcRootArg ++ [ jobsExpr ]) "")
+  withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (gcRootArg ++ [jobsExpr]) "")
 
-copyToRemote :: [FilePath] -> String ->  IO ()
-copyToRemote [] _ = 
+
+copyToRemote :: [FilePath] -> String -> IO ()
+copyToRemote [] _ =
   putStrLn "No derivations to copy"
 copyToRemote pathsToCopy remote = do
   withTime "nix copy" $
     callProcess "nix" (["copy", "--to", remote] ++ pathsToCopy)
-  
+
+
 nixBuildDryRun :: [String] -> IO [String]
 nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
-  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
-    inputLines <- Prelude.lines <$> case stderrHndl of
-      Just hndl -> hGetContents hndl
-      Nothing -> pure []
+  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)){std_err = CreatePipe}) $ \_stdin _stdout stderrHndl prchndl -> do
+    inputLines <-
+      Prelude.lines <$> case stderrHndl of
+        Just hndl -> hGetContents hndl
+        Nothing -> pure []
     -- See Note: [nix-build --dry-run output]
-    let stripLeadingWhitespace = dropWhile (==' ')
+    let stripLeadingWhitespace = dropWhile (== ' ')
     let theseLine line = List.isPrefixOf "these" line || List.isPrefixOf "this" line
     let buildLine line = theseLine line && List.isSubsequenceOf "built" line
     let fetchLine line = theseLine line && List.isSubsequenceOf "fetched" line
@@ -399,6 +438,7 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
     case exitCode of
       ExitSuccess -> pure res
       ExitFailure err -> error $ "nix-build --dry run failed with exit code: " ++ show err
+
 
 -- Note: [nix-build --dry-run output]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -421,20 +461,19 @@ nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
 
 add :: AdjacencyMap FilePath -> FilePath -> IO (AdjacencyMap FilePath)
 add g drvPath =
-  if hasVertex drvPath g then
-    return g
+  if hasVertex drvPath g
+    then
+      return g
+    else
+      fmap (parseOnly parseDerivation) (readFile drvPath) >>= \case
+        Left _ ->
+          return g
+        Right Derivation{inputDrvs} -> do
+          deps <- foldr (\dep m -> m >>= \g' -> add g' dep) (pure g) (Map.keys inputDrvs)
 
-  else
-    fmap (parseOnly parseDerivation) (readFile drvPath) >>= \case
-      Left _ ->
-        return g
+          let g' = overlays (edge drvPath <$> Map.keys inputDrvs)
 
-      Right Derivation{ inputDrvs } -> do
-        deps <- foldr (\dep m -> m >>= \g' -> add g' dep) (pure g) (Map.keys inputDrvs)
-
-        let g' = overlays (edge drvPath <$> Map.keys inputDrvs)
-
-        return $ overlay deps g'
+          return $ overlay deps g'
 
 {- Note [Pipeline batching]
 

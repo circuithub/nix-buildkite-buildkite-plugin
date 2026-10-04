@@ -10,6 +10,8 @@ configuration:
       type: string
     skip-already-built:
       type: string
+    skip-checkout:
+      type: boolean
     batch-size:
       type: integer
     max-steps:

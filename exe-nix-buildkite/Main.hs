@@ -1,14 +1,21 @@
-{-# language OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 
-module Main ( main ) where
+module Main (main) where
 
-import Data.Aeson ( encode, object, (.=) )
-import Data.Maybe ( fromMaybe, listToMaybe )
+-- aeson
+import Data.Aeson (encode, object, (.=))
+
+-- base
+import Data.Maybe (fromMaybe, listToMaybe)
+import System.Environment (getArgs, lookupEnv)
+import Text.Read (readMaybe)
+
+-- bytestring
 import qualified Data.ByteString.Lazy.Char8 as BL
-import System.Environment ( getArgs, lookupEnv )
-import Text.Read ( readMaybe )
 
-import NixBuildkite ( Config(..), defaultConfig, generatePipeline )
+-- nix-buildkite
+import NixBuildkite (Config (..), defaultConfig, generatePipeline)
+
 
 main :: IO ()
 main = do
@@ -24,12 +31,20 @@ main = do
       Just _ -> error "SKIP_ALREADY_BUILT only accepts 'true' or 'false'."
       Nothing -> False
 
+  skipCheckout <- do
+    e <- lookupEnv "SKIP_CHECKOUT"
+    pure $ case e of
+      Just "true" -> True
+      Just "false" -> False
+      Just _ -> error "SKIP_CHECKOUT only accepts 'true' or 'false'."
+      Nothing -> False
+
   batchSize <- do
     e <- lookupEnv "BATCH_SIZE"
     pure $ case e of
       Nothing -> configBatchSize defaultConfig
       Just s -> fromMaybe (error "BATCH_SIZE must be a positive integer") (readMaybe s)
-      
+
   gcRoot <- lookupEnv "GC_ROOT"
 
   copyRemote <- lookupEnv "COPY_REMOTE"
@@ -42,16 +57,18 @@ main = do
       Nothing -> Nothing
       Just s -> Just $ fromMaybe (error "MAX_STEPS must be a positive integer") (readMaybe s)
 
-  let config = Config
-        { configPostBuildHook = postBuildHook
-        , configSkipAlreadyBuilt = skipAlreadyBuilt
-        , configBatchSize = batchSize
-        , configMaxSteps = maxSteps
-        , configGcRoot = gcRoot
-        , configCopyRemote = copyRemote
-        }
+  let config =
+        Config
+          { configPostBuildHook = postBuildHook
+          , configSkipAlreadyBuilt = skipAlreadyBuilt
+          , configSkipCheckout = skipCheckout
+          , configBatchSize = batchSize
+          , configMaxSteps = maxSteps
+          , configGcRoot = gcRoot
+          , configCopyRemote = copyRemote
+          }
 
   batches <- generatePipeline config jobsExpr
 
   -- Output one JSON object per line
-  mapM_ (\batch -> BL.putStrLn $ encode $ object [ "steps" .= batch ]) batches
+  mapM_ (\batch -> BL.putStrLn $ encode $ object ["steps" .= batch]) batches
