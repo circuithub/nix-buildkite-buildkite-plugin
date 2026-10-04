@@ -4,5 +4,6 @@ steps:
   - command: nix-buildkite
     label: ":nixos: :buildkite:"
     plugins:
-      circuithub/nix-buildkite:
+      circuithub/nix-buildkite#$BUILDKITE_COMMIT:
         file: jobs.nix
+        skip-checkout: true

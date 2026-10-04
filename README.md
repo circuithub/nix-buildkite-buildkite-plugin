@@ -81,6 +81,25 @@ Note that in order to use this feature, you'll need to add the user
 that the Buildkite agent runs as to `nix.trustedUsers`, as only
 trusted users can run post-build hooks.
 
+## Skipping checkout in generated jobs
+
+Set `skip-checkout: true` to omit Git checkout in the generated build jobs,
+including the single job emitted when `max-steps` is exceeded. The evaluation
+job still checks out the repository to read the Nix expression.
+
+``` yaml
+      circuithub/nix-buildkite:
+        file: jobs.nix
+        skip-checkout: true
+```
+
+This removes repeated fetches and lets generated jobs run after a temporary
+merge-queue branch has been deleted. The option defaults to false. Enable it
+only when agent hooks and any `post-build-hook` work without a checkout, using
+absolute paths rather than files in the repository. As with other generated
+jobs, the derivations and their inputs must be available in the agent's Nix
+store or through its configured remote stores.
+
 ## Limiting the size of the pipeline
 
 Very large pipelines can be unwieldy: they clutter the Buildkite UI, add
