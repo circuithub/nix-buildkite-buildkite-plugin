@@ -140,7 +140,23 @@ You can do this like so:
   copy-remote: ssh-ng://my-remote-builder
 ```
 
-`
+## Building in a remote store
+
+The plugin accepts an optional `store` argument, which lets us build in a remote
+store, e.g.,  when using a service such as [nixbuild.net](https://nixbuild.net).
+This is preferable since we don't need to upload the derivaton inputs if we are
+also using the `copy-remote` option.
+
+``` yaml
+steps:
+  - command: nix-buildkite
+    label: ":nixos: :buildkite:"
+    plugins:
+      circuithub/nix-buildkite:
+        file: jobs.nix
+        store: ssh-ng://remote-store
+```
+
 
 ## Sit Back and Enjoy!
 
