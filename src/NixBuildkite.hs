@@ -86,6 +86,8 @@ data Config = Config
   , configCopyRemote :: Maybe String
     -- ^ A nix remote that we should copy the derivations to.
     -- This is helpful if the build realisers are not running on the same machine as the instantiator.
+  , configStore :: Maybe String
+    -- ^ The nix store that we will use to realise our derivations.
   } deriving (Show, Eq)
 
 -- | Default configuration with sensible defaults.
@@ -97,6 +99,7 @@ defaultConfig = Config
   , configMaxSteps = Nothing
   , configGcRoot = Nothing
   , configCopyRemote = Nothing
+  , configStore = Nothing
   }
 
 -- | Sometimes nix will return stuff that looks like @/nix/store/asdfasdf-foo.drv!doc@.
@@ -137,6 +140,7 @@ generatePipeline config jobsExpr = do
 generatePipelineFromDrvPaths :: Config -> [FilePath] -> IO [[Value]]
 generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
   let postBuildHook = postBuildHookArgs config
+      store = storeArgs config
 
   -- Build an association list of a job name and the derivation that should be
   -- realised for that job.
@@ -225,7 +229,7 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
       step label drvPath =
         object
           [ "label" .= unpack label
-          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> postBuildHook <> [ "-r", drvPath ])
+          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> store <> postBuildHook <> [ "-r", drvPath ])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
           ]
@@ -265,6 +269,12 @@ postBuildHookArgs config = case configPostBuildHook config of
   Nothing   -> []
   Just path -> [ "--post-build-hook", path ]
 
+-- | Tell @nix-store -r@ to use a specific (remote) store.
+storeArgs :: Config -> [String]
+storeArgs config = case configStore config of
+  Nothing    -> []
+  Just store -> [ "--store", store ]
+
 {- Note [Collapsing large pipelines]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 When a pipeline would be too large ('configMaxSteps'), we replace the per-job
@@ -288,8 +298,8 @@ at the cost of one re-evaluation. -}
 -- | The @build-all.sh@ script, embedded at compile time. Keeping it as a real
 -- script file — rather than a string assembled in Haskell — means it can be
 -- read, shellchecked and edited as ordinary bash. It takes the derivations to
--- build as positional arguments and reads @NBK_POST_BUILD_HOOK@ from the
--- environment; 'bigStepCommand' supplies both.
+-- build as positional arguments and reads @NBK_POST_BUILD_HOOK@ and
+-- @NBK_STORE@ from the environment; 'bigStepCommand' supplies both.
 --
 -- 'addDependentFile' makes GHC recompile this module when the script changes.
 buildAllScript :: Text
@@ -306,32 +316,37 @@ bigStep :: Config -> String -> [(Text, FilePath)] -> Value
 bigStep config reason jobs =
   object
     [ "label"   .= ("Build everything (" ++ reason ++ ")")
-    , "command" .= bigStepCommand (configPostBuildHook config) jobs
+    , "command" .= bigStepCommand config jobs
     , "key"     .= ("nix-buildkite-build-all" :: String)
     ]
 
 -- | The command for the collapsed step: a small prelude passing the job
 -- derivations to 'buildAllScript' as positional arguments (and the post-build
--- hook, if any, via an environment variable), followed by the script itself.
+-- hook and store, if any, via environment variables), followed by the script
+-- itself.
 --
 -- Drv store paths are shell-safe (alphanumerics plus @/-._@) so they are
 -- emitted bare. Note: 'buildAllScript' realises them in a single @nix-store@
 -- invocation, which is bounded by @ARG_MAX@ (~2MB, i.e. tens of thousands of
 -- drvs) — fine for realistic pipelines, and a small max-steps keeps the job set
 -- well under that.
-bigStepCommand :: Maybe FilePath -> [(Text, FilePath)] -> Value
-bigStepCommand postBuildHook jobs = String (pack prelude <> buildAllScript)
+bigStepCommand :: Config -> [(Text, FilePath)] -> Value
+bigStepCommand config jobs = String (pack prelude <> buildAllScript)
   where
     drvPaths = map snd jobs
 
-    hookLine = case postBuildHook of
+    hookLine = case configPostBuildHook config of
       Nothing   -> ""
       Just path -> "export NBK_POST_BUILD_HOOK=" ++ shellSingleQuote path ++ "\n"
+
+    storeLine = case configStore config of
+      Nothing    -> ""
+      Just store -> "export NBK_STORE=" ++ shellSingleQuote store ++ "\n"
 
     -- Pass the derivations as positional arguments, one per line for legibility.
     setArgs = "set -- " ++ intercalate " \\\n  " drvPaths ++ "\n"
 
-    prelude = hookLine ++ setArgs
+    prelude = hookLine ++ storeLine ++ setArgs
 
 -- | Single-quote a string for safe inclusion in a shell command.
 shellSingleQuote :: String -> String

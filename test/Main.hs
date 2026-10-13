@@ -4,6 +4,7 @@ module Main (main) where
 
 import Data.Aeson (Value(..))
 import Data.Aeson.Types (parseMaybe, (.:))
+import qualified Data.Aeson.Key as Key
 import qualified Data.Text as T
 import Data.Maybe (mapMaybe)
 import qualified Data.Vector as V
@@ -42,6 +43,11 @@ tests = testGroup "nix-buildkite"
       , testCase "does not collapse at the limit" testMaxStepsAtLimit
       , testCase "no limit leaves the pipeline unchanged" testMaxStepsUnset
       ]
+  , testGroup "Remote store"
+      [ testCase "per-job steps build in the configured store" testStoreInJobSteps
+      , testCase "collapsed step forwards the configured store" testStoreInCollapsedStep
+      , testCase "no store configured leaves job steps unchanged" testStoreUnset
+      ]
   ]
 
 -- | Run the pipeline generator with the given batch size
@@ -62,7 +68,7 @@ getAllSteps = concat
 
 -- | Get a field from a step
 getField :: T.Text -> Value -> Maybe Value
-getField field (Object obj) = parseMaybe (.: field) obj
+getField field (Object obj) = parseMaybe (.: Key.fromText field) obj
 getField _ _ = Nothing
 
 -- | Get the label from a step
@@ -241,3 +247,34 @@ testMaxStepsUnset = do
   batches <- runWith id independentJobsFile
   assertBool "should not collapse" (not (isCollapsed batches))
   assertEqual "should keep all 5 steps" 5 (length (getAllSteps batches))
+
+-- Tests for building in a remote store (--store)
+
+-- | With configStore set, every job step passes --store to nix-store.
+testStoreInJobSteps :: IO ()
+testStoreInJobSteps = do
+  batches <- runWith (\c -> c { configStore = Just "ssh-ng://remote-store" }) independentJobsFile
+  let steps = getAllSteps batches
+  assertEqual "should keep all 5 steps" 5 (length steps)
+  assertBool "every step should build with --store" $
+    all (\step -> "--store ssh-ng://remote-store -r" `T.isInfixOf` getCommand step) steps
+
+-- | The collapsed build-everything job forwards the store to build-all.sh.
+testStoreInCollapsedStep :: IO ()
+testStoreInCollapsedStep = do
+  batches <- runWith (\c -> c { configMaxSteps = Just 3, configStore = Just "ssh-ng://remote-store" }) independentJobsFile
+  case getAllSteps batches of
+    [step] -> do
+      let cmd = getCommand step
+      assertBool "should export NBK_STORE" $
+        "export NBK_STORE='ssh-ng://remote-store'" `T.isInfixOf` cmd
+      assertBool "build-all.sh should forward --store" $
+        "--store \"$NBK_STORE\"" `T.isInfixOf` cmd
+    steps -> assertEqual "should collapse to exactly one step" 1 (length steps)
+
+-- | With no store configured, per-job steps are unchanged.
+testStoreUnset :: IO ()
+testStoreUnset = do
+  batches <- runWith id independentJobsFile
+  assertBool "no step should pass --store" $
+    all (\step -> not ("--store" `T.isInfixOf` getCommand step)) (getAllSteps batches)

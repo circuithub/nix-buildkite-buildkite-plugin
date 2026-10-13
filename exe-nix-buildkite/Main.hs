@@ -33,6 +33,7 @@ main = do
   gcRoot <- lookupEnv "GC_ROOT"
 
   copyRemote <- lookupEnv "COPY_REMOTE"
+  store <- lookupEnv "STORE"
 
   -- If set, collapse to a single "build everything" job once the pipeline would
   -- exceed this many steps. Unset means no limit.
@@ -49,6 +50,7 @@ main = do
         , configMaxSteps = maxSteps
         , configGcRoot = gcRoot
         , configCopyRemote = copyRemote
+        , configStore = store
         }
 
   batches <- generatePipeline config jobsExpr

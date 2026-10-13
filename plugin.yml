@@ -16,6 +16,8 @@ configuration:
       type: integer
     gc-root:
       type: string
+    store:
+      type: string
   required:
     - file
   not:
@@ -25,4 +27,5 @@ configuration:
       - batch-size
       - max-steps
       - gc-root
+      - store
   additionalProperties: false
