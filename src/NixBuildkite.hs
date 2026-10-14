@@ -389,7 +389,7 @@ nixInstantiate config jobsExpr = do
 
 copyToRemote :: [FilePath] -> String ->  IO ()
 copyToRemote [] _ = 
-  putStrLn "No derivations to copy"
+  hPutStrLn stderr "No derivations to copy"
 copyToRemote pathsToCopy remote = do
   withTime "nix copy" $
     callProcess "nix" (["copy", "--to", remote] ++ pathsToCopy)
