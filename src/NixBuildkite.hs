@@ -229,7 +229,7 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
       step label drvPath =
         object
           [ "label" .= unpack label
-          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> store <> postBuildHook <> [ "-r", drvPath ])
+          , "command" .= String (pack $ unwords $ [ "nix-store", "-vvvvv" ] <> store <> postBuildHook <> [ "-r", drvPath ])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
           ]
