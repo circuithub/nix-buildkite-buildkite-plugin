@@ -229,7 +229,7 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
       step label drvPath =
         object
           [ "label" .= unpack label
-          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> store <> postBuildHook <> [ "-r", drvPath ])
+          , "command" .= String (pack $ unwords $ [ "nix", "--extra-experimental-features", "'nix-command flakes'", "build" ] <> store <> postBuildHook <> [ "'" ++ drvPath ++ "^*'" ])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
           ]
@@ -344,7 +344,7 @@ bigStepCommand config jobs = String (pack prelude <> buildAllScript)
       Just store -> "export NBK_STORE=" ++ shellSingleQuote store ++ "\n"
 
     -- Pass the derivations as positional arguments, one per line for legibility.
-    setArgs = "set -- " ++ intercalate " \\\n  " drvPaths ++ "\n"
+    setArgs = "set -- " ++ intercalate " \\\n  " (map (\p -> "'" ++ p ++ "^*'") drvPaths) ++ "\n"
 
     prelude = hookLine ++ storeLine ++ setArgs
 

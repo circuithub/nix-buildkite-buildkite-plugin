@@ -23,7 +23,7 @@ fi
 if [ -n "${NBK_STORE:-}" ]; then
   nix_args+=(--store "$NBK_STORE")
 fi
-nix-store "${nix_args[@]}" -r "$@" 2>&1 | tee "$log" | grep --line-buffered -vE '^error: [0-9]+ dependencies of derivation '
+nix build --extra-experimental-features 'nix-command flakes' "${nix_args[@]}" "$@" 2>&1 | tee "$log" | grep --line-buffered -vE '^error: [0-9]+ dependencies of derivation '
 status="${PIPESTATUS[0]}"
 
 if [ "$status" -ne 0 ]; then
