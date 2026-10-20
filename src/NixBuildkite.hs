@@ -229,7 +229,7 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
       step label drvPath =
         object
           [ "label" .= unpack label
-          , "command" .= String (pack $ unwords $ [ "nix-store" ] <> store <> postBuildHook <> [ "-r", drvPath ])
+          , "command" .= String (pack $ unwords $ [ "nix-store", "-vvvv" ] <> store <> postBuildHook <> [ "-r", drvPath ])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
           ]
@@ -385,7 +385,7 @@ nixInstantiate config jobsExpr = do
   let gcRootArg = case configGcRoot config of
         Nothing -> []
         Just path -> ["--add-root", path]
-  withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (gcRootArg ++ [ jobsExpr ]) "")
+  withTime "nix-instantiate" (Prelude.lines <$> readProcess "nix-instantiate" (["-vvvv"] ++ gcRootArg ++ [ jobsExpr ]) "")
 
 copyToRemote :: [FilePath] -> String ->  IO ()
 copyToRemote [] _ = 
