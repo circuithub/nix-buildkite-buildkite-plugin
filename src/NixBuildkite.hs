@@ -232,6 +232,10 @@ generatePipelineFromDrvPaths config inputDrvPathsToBuild = do
           , "command" .= String (pack $ unwords $ [ "nix-store" ] <> store <> postBuildHook <> [ "-r", drvPath ])
           , "key" .= stepify drvPath
           , "depends_on" .= dependencies
+          , "checkout" .= do
+              object
+                [ "skip" .= True -- nix-store -r doesn't need a checkout
+                ]
           ]
         where
           dependencies = map stepify $ S.toList $ preSet drvPath jobGraph
