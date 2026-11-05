@@ -122,15 +122,15 @@ generatePipeline config jobsExpr = do
   -- This will be a no-op otherwise.
   inputDrvPaths <- traverse (\p -> pathIsSymbolicLink p >>= \b -> if b then getSymbolicLinkTarget p else pure p) inputDrvPathsWithLinks
 
+  for_ (configCopyRemote config) $ copyToRemote inputDrvPaths
+
   -- Get the list of derivations that will be built, which may include drvs not in inputDrvPaths
   pathsToBuild <- if configSkipAlreadyBuilt config
-    then nixBuildDryRun inputDrvPaths
+    then nixBuildDryRun config inputDrvPaths
     else pure inputDrvPaths
 
   -- Filter our inputDrvs down to just those that will be built (if the "skip already built" flag is set)
   let inputDrvPathsToBuild = S.toList $ S.fromList inputDrvPaths `S.intersection` S.fromList pathsToBuild
-
-  for_ (configCopyRemote config) $ copyToRemote pathsToBuild
 
   generatePipelineFromDrvPaths config inputDrvPathsToBuild
 
@@ -398,9 +398,9 @@ copyToRemote pathsToCopy remote = do
   withTime "nix copy" $
     callProcess "nix" (["copy", "--to", remote] ++ pathsToCopy)
   
-nixBuildDryRun :: [String] -> IO [String]
-nixBuildDryRun jobsExpr = withTime "nix-build --dry-run" $
-  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
+nixBuildDryRun :: Config -> [String] -> IO [String]
+nixBuildDryRun config jobsExpr = withTime "nix-build --dry-run" $
+  withCreateProcess ((proc "nix-build" (["--dry-run"] ++ storeArgs config ++ jobsExpr)) { std_err = CreatePipe }) $ \ _stdin _stdout stderrHndl prchndl -> do
     inputLines <- Prelude.lines <$> case stderrHndl of
       Just hndl -> hGetContents hndl
       Nothing -> pure []
