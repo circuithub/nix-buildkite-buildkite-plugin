@@ -31,8 +31,8 @@ Next, add a `.buildkite/pipeline.yml` file with the following contents:
 
 ``` yaml
 steps:
-  - command: nix-buildkite
-    label: ":nixos: :buildkite:"
+  - label: ":nixos: :buildkite:"
+    command: "true"
     plugins:
       circuithub/nix-buildkite:
         file: jobs.nix
@@ -60,8 +60,8 @@ semantics](https://nixos.org/manual/nix/stable/advanced-topics/post-build-hook.h
 
 ``` yaml
 steps:
-  - command: nix-buildkite
-    label: ":nixos: :buildkite:"
+  - label: ":nixos: :buildkite:"
+    command: "true"
     plugins:
       circuithub/nix-buildkite:
         file: jobs.nix
@@ -91,8 +91,8 @@ cap this. If it is exceeded, `nix-buildkite` collapses the whole pipeline into a
 
 ``` yaml
 steps:
-  - command: nix-buildkite
-    label: ":nixos: :buildkite:"
+  - label: ":nixos: :buildkite:"
+    command: "true"
     plugins:
       circuithub/nix-buildkite:
         file: jobs.nix
@@ -149,8 +149,8 @@ also using the `copy-remote` option.
 
 ``` yaml
 steps:
-  - command: nix-buildkite
-    label: ":nixos: :buildkite:"
+  - label: ":nixos: :buildkite:"
+    command: "true"
     plugins:
       circuithub/nix-buildkite:
         file: jobs.nix

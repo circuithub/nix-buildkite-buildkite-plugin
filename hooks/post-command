@@ -3,6 +3,12 @@ set -euo pipefail
 
 DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 
+# Ensure that the command step exited successfully
+if [[ "${BUILDKITE_COMMAND_EXIT_STATUS:-0}" -ne 0 ]]; then
+    echo "Skipping nix-buildkite: the step's command exited with a non-zero exit code"
+    exit 0
+fi
+
 NIX_FILE="$BUILDKITE_PLUGIN_NIX_BUILDKITE_FILE"
 if [[ -n "${BUILDKITE_PLUGIN_NIX_BUILDKITE_POST_BUILD_HOOK:-}" ]]; then
     export POST_BUILD_HOOK="$BUILDKITE_PLUGIN_NIX_BUILDKITE_POST_BUILD_HOOK"
